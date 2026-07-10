@@ -302,9 +302,9 @@ async def _get_transcript(record: dict) -> str | None:
         without_timestamps=True,
     )
 
-    if info.duration < 60:
+    if info.duration < 180:
         logger.warning(
-            "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
+            "Audio too short for call_id=%s | duration=%.1f seconds (minimum 180s required)",
             record["call_id"],
             info.duration,
         )
