@@ -224,15 +224,20 @@ async def _run_pipeline(record: dict):
             except (TypeError, ValueError):
                 pass
 
+        if analysis.get("call_type") in ["process_call", "offer_call"]:
+            logger.warning("No transcript for call_id=%s — aborting", call_id)
+            return
+
         # Only run the full pipeline for process calls over 3 minutes
-        raw_call_type = str(analysis.get("call_type", "") or "").strip().lower()
         duration = float(record.get("duration") or 0)
-        if "process" in raw_call_type and duration < 180:
+        if duration < 180:
             logger.info(
                 "Skipping pipeline — process call under 3 minutes | "
                 "call_id=%s duration=%.1fs", call_id, duration
             )
             return
+
+        
         agent_analysis: dict = {}
         try:
             agent_analysis = await _score_with_claude_agent(transcript) or {}
