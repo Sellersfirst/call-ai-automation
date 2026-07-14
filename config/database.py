@@ -93,6 +93,22 @@ def get_active_prompt_with_id(prompt_type: str = "rubrics") -> tuple[str, int | 
     return "insert prompt here", None
 
 
+def get_prompt_text_by_id(prompt_id: int) -> str | None:
+    """Return the prompt_text for a specific prompt row, or None if not found."""
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT prompt_text FROM prompts WHERE id=%s",
+                (prompt_id,),
+            ).fetchone()
+            if row and row["prompt_text"]:
+                return row["prompt_text"]
+    except Exception as exc:
+        logger.warning("Failed to load prompt %s from DB: %s", prompt_id, exc)
+
+    return None
+
+
 def init_db():
     print('Initializing database...')
     with get_connection() as conn:
@@ -230,6 +246,27 @@ def init_db():
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_prompts_active
         ON prompts(active)
+        """)
+
+        # For google_sheet_job: optional post-call variable extraction into an output sheet
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            output_sheet_url TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            output_worksheet_name TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            variables_to_record TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            extraction_prompt_id INTEGER REFERENCES prompts(id)
         """)
 
         conn.execute("""
