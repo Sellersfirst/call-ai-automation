@@ -10,6 +10,7 @@ from google.oauth2.service_account import Credentials
 from oauth2client.service_account import ServiceAccountCredentials
 
 from config.database import get_connection
+from utils.phone_utils import phones_match
 
 logger = logging.getLogger("sheets_repo")
 
@@ -72,9 +73,7 @@ def find_row_by_phone(sheet, phone):
     logger.info(f"Searching for phone in sheet: {phone}")
     records = sheet.get_all_records()
     for idx, r in enumerate(records, start=2):
-        valid  = str(r.get("VALID_PHONES", "")).replace("+", "")
-        mobile = str(r.get("MOBILE_PHONE", "")).replace("+", "")
-        if phone == valid or phone == mobile:
+        if phones_match(phone, r.get("VALID_PHONES", "")) or phones_match(phone, r.get("MOBILE_PHONE", "")):
             logger.info(f"Match found at row: {idx}")
             return idx
     logger.warning("No matching row found")

@@ -6,7 +6,7 @@ from services.sheets_workflow_service import get_leads, normalize_phone, update_
 from services.area_service import get_area_mapping
 from services.call_service import make_call
 from repositories.google_sheets_repository import get_client, find_row_by_phone
-from utils.phone_utils import remove_plus
+from utils.phone_utils import remove_plus, phones_match
 from utils.sheet_utils import extract_sheet_id
 from config.database import (get_connection, get_row_limit, create_call_log,update_call_log, get_call_log,can_retry_on_voicemail, increment_voicemail_retry_count,)
 
@@ -184,8 +184,7 @@ async def post_call_update(request: Request):
             records    = temp_sheet.get_all_records()
 
             for idx, r in enumerate(records, start=2):
-                if (str(r.get("VALID_PHONES", "")).replace("+", "") == phone or
-                        str(r.get("MOBILE_PHONE", "")).replace("+", "") == phone):
+                if phones_match(phone, r.get("VALID_PHONES", "")) or phones_match(phone, r.get("MOBILE_PHONE", "")):
                     row_id   = idx
                     sheet    = temp_sheet
                     sheet_db = s
