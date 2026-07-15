@@ -1,5 +1,7 @@
 import logging
+from datetime import datetime
 
+import pytz
 from fastapi import APIRouter, Request
 
 from config.database import get_connection, get_prompt_text_by_id
@@ -8,6 +10,39 @@ from services.variable_extraction_service import extract_variables
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _direct_fields(payload: dict, transcript_text: str, event_timestamp: int | None) -> dict:
+    """
+    Fields passed straight through from the ElevenLabs payload — no LLM involved.
+    record_id/call_from/lead_owner are best-effort: they're only populated if the
+    calling job threaded them through as dynamic_variables when the call was placed
+    (currently only 'address' and ElevenLabs' own 'system__called_number' are set
+    anywhere in this codebase — those three will come through blank otherwise).
+    call_from/call_to are also null for non-telephony calls (e.g. web widget /
+    react_sdk test calls have no phone number involved at all).
+    """
+    custom_vars = (
+        payload.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
+    )
+    metadata = payload.get("metadata", {}) or {}
+
+    pacific_time = ""
+    if event_timestamp:
+        dt = datetime.utcfromtimestamp(event_timestamp)
+        pacific = pytz.timezone("America/Los_Angeles")
+        pacific_time = dt.replace(tzinfo=pytz.utc).astimezone(pacific).strftime("%m/%d/%Y %H:%M:%S")
+
+    return {
+        "Call ID": payload.get("conversation_id") or "",
+        "Record ID": custom_vars.get("record_id") or custom_vars.get("lead_id") or custom_vars.get("contact_id") or "",
+        "Call From": custom_vars.get("system__caller_id") or custom_vars.get("call_from") or "",
+        "Call To": custom_vars.get("system__called_number") or "",
+        "Lead Owner": custom_vars.get("lead_owner") or "",
+        "Timestamp": pacific_time,
+        "Duration": metadata.get("call_duration_secs", ""),
+        "Transcript": transcript_text,
+    }
 
 
 def _find_extraction_job(agent_id: str) -> dict | None:
@@ -78,16 +113,17 @@ async def extraction_post_call(request: Request):
             logger.warning(f"extraction_post_call: extraction returned nothing | sheet_id={sheet_db['id']}")
             return {"message": "Extraction failed"}
 
-        conv_id = payload.get("conversation_id")
         data_map = {
+            **_direct_fields(payload, transcript_text, data.get("event_timestamp")),
             **extracted,
-            "Conversation ID": conv_id or "",
         }
 
         client = get_client()
         append_extracted_variables(client, sheet_db["output_sheet_url"], sheet_db["output_worksheet_name"], data_map)
 
-        logger.info(f"extraction_post_call: row appended | sheet_id={sheet_db['id']} conv_id={conv_id}")
+        logger.info(
+            f"extraction_post_call: row appended | sheet_id={sheet_db['id']} conv_id={payload.get('conversation_id')}"
+        )
         return {"status": "ok", "sheet_id": sheet_db["id"], "extracted": extracted}
 
     except Exception as e:

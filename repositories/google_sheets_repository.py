@@ -296,6 +296,18 @@ def update_sheet_row(
 
 #  APPEND EXTRACTED VARIABLES (post-call output sheet)
 
+def _cell_safe(value):
+    """A single Sheets cell can't hold a raw list/dict (e.g. Claude returning
+    ["missed q1", "missed q2"] for a 'Missed Questions' variable) — flatten it."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return value
+
+
 def append_extracted_variables(client, sheet_url: str, worksheet_name: str, data_map: dict) -> None:
     """
     Appends a new row to an output sheet, matching columns by header name
@@ -307,7 +319,7 @@ def append_extracted_variables(client, sheet_url: str, worksheet_name: str, data
         sheet = client.open_by_key(sheet_key).worksheet(worksheet_name)
 
         headers = sheet.row_values(1)
-        row = [data_map.get(col) if data_map.get(col) is not None else "" for col in headers]
+        row = [_cell_safe(data_map.get(col)) for col in headers]
         sheet.append_row(row, value_input_option="USER_ENTERED")
         logger.info(f"append_extracted_variables: row appended to {sheet_key}/{worksheet_name}")
 
