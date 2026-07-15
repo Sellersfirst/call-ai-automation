@@ -307,7 +307,7 @@ def append_extracted_variables(client, sheet_url: str, worksheet_name: str, data
         sheet = client.open_by_key(sheet_key).worksheet(worksheet_name)
 
         headers = sheet.row_values(1)
-        row = [data_map.get(col, "") for col in headers]
+        row = [data_map.get(col) if data_map.get(col) is not None else "" for col in headers]
         sheet.append_row(row, value_input_option="USER_ENTERED")
         logger.info(f"append_extracted_variables: row appended to {sheet_key}/{worksheet_name}")
 

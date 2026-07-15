@@ -41,20 +41,21 @@ def extract_variables(prompt_text: str, transcript: str, summary: str, variable_
     if not variable_names:
         return {}
 
-    system = (
-        f"{prompt_text}\n\n"
-        "You must respond with ONLY a valid JSON object (no markdown fences, no commentary) "
+    user_content = (
+        f"Variables to extract: {', '.join(variable_names)}\n\n"
+        f"Call summary:\n{summary or 'N/A'}\n\n"
+        f"Transcript:\n{transcript or 'No transcript'}\n\n"
+        "Respond with ONLY a valid JSON object (no markdown fences, no commentary) "
         f"with exactly these keys: {', '.join(variable_names)}. "
         "If a value cannot be determined from the call, use null for that key."
     )
-    user_content = f"Call summary:\n{summary or 'N/A'}\n\nTranscript:\n{transcript or 'No transcript'}"
 
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=1024,
-            system=system,
+            system=prompt_text,
             messages=[{"role": "user", "content": user_content}],
         )
         raw = (message.content[0].text or "").strip()
