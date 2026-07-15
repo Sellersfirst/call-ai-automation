@@ -5,10 +5,11 @@ from config.config import DEFAULT_PHONE
 from services.sheets_workflow_service import get_leads, normalize_phone, update_row
 from services.area_service import get_area_mapping
 from services.call_service import make_call
-from repositories.google_sheets_repository import get_client, find_row_by_phone
+from repositories.google_sheets_repository import get_client, find_row_by_phone, append_extracted_variables
+from services.variable_extraction_service import extract_variables
 from utils.phone_utils import remove_plus, phones_match
 from utils.sheet_utils import extract_sheet_id
-from config.database import (get_connection, get_row_limit, create_call_log,update_call_log, get_call_log,can_retry_on_voicemail, increment_voicemail_retry_count,)
+from config.database import (get_connection, get_row_limit, create_call_log,update_call_log, get_call_log,can_retry_on_voicemail, increment_voicemail_retry_count, get_prompt_text_by_id,)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -313,6 +314,45 @@ async def post_call_update(request: Request):
                 lead_score       = str(analysis.get("lead_score", {}).get("value", "") or ""),
                 transfer_used    = str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used", "") or ""),
             )
+
+        #  POST-CALL VARIABLE EXTRACTION → OUTPUT SHEET (optional, per-job)
+        try:
+            if (duration > 0 and sheet_db.get("output_sheet_url") and sheet_db.get("output_worksheet_name")
+                    and sheet_db.get("variables_to_record") and sheet_db.get("extraction_prompt_id")):
+
+                prompt_text = get_prompt_text_by_id(sheet_db["extraction_prompt_id"])
+
+                if prompt_text:
+                    var_names = [v.strip() for v in sheet_db["variables_to_record"].split(",") if v.strip()]
+                    transcript_text = "\n".join(
+                        f"{m.get('role', '').capitalize()}: {m.get('message', '')}"
+                        for m in payload.get("transcript", []) if m.get("message")
+                    )
+                    summary = payload.get("analysis", {}).get("transcript_summary") or ""
+
+                    extracted = extract_variables(
+                        prompt_text, transcript_text, summary, var_names, sheet_db.get("variable_descriptions")
+                    )
+
+                    if extracted:
+                        data_map = {
+                            **extracted,
+                            "Phone": phone,
+                            "Conversation ID": conv_id or "",
+                            "Timestamp": pacific_time,
+                        }
+                        append_extracted_variables(
+                            client, sheet_db["output_sheet_url"], sheet_db["output_worksheet_name"], data_map
+                        )
+                else:
+                    logger.warning(
+                        f"extraction_prompt_id={sheet_db['extraction_prompt_id']} not found — skipping extraction"
+                    )
+            elif any(sheet_db.get(f) for f in
+                     ("output_sheet_url", "output_worksheet_name", "variables_to_record", "extraction_prompt_id")):
+                logger.info(f"sheet_id={sheet_db.get('id')} extraction config incomplete — skipping")
+        except Exception as extract_err:
+            logger.error(f"Variable extraction error: {extract_err}", exc_info=True)
 
         return {"status": "updated", "row": row_id, "disposition": disposition}
 

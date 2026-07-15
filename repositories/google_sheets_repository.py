@@ -11,6 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 from config.database import get_connection
 from utils.phone_utils import phones_match
+from utils.sheet_utils import extract_sheet_id
 
 logger = logging.getLogger("sheets_repo")
 
@@ -291,3 +292,36 @@ def update_sheet_row(
 
     except Exception as e:
         logger.error(f"Google Sheets error (update_sheet_row): {repr(e)}")
+
+
+#  APPEND EXTRACTED VARIABLES (post-call output sheet)
+
+def _cell_safe(value):
+    """A single Sheets cell can't hold a raw list/dict (e.g. Claude returning
+    ["missed q1", "missed q2"] for a 'Missed Questions' variable) — flatten it."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return value
+
+
+def append_extracted_variables(client, sheet_url: str, worksheet_name: str, data_map: dict) -> None:
+    """
+    Appends a new row to an output sheet, matching columns by header name
+    (same convention as log_to_sheets/update_sheet_row). Unknown headers are
+    left blank; data_map keys with no matching header are ignored.
+    """
+    try:
+        sheet_key = extract_sheet_id(sheet_url)
+        sheet = client.open_by_key(sheet_key).worksheet(worksheet_name)
+
+        headers = sheet.row_values(1)
+        row = [_cell_safe(data_map.get(col)) for col in headers]
+        sheet.append_row(row, value_input_option="USER_ENTERED")
+        logger.info(f"append_extracted_variables: row appended to {sheet_key}/{worksheet_name}")
+
+    except Exception as e:
+        logger.error(f"Google Sheets error (append_extracted_variables): {repr(e)}")
