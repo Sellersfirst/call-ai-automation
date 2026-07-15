@@ -269,6 +269,12 @@ def init_db():
             extraction_prompt_id INTEGER REFERENCES prompts(id)
         """)
 
+        # Per-variable descriptions for extraction, e.g. {"rating": "1-10 call quality score"}
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            variable_descriptions JSONB
+        """)
+
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_prompts_type
         ON prompts(type)

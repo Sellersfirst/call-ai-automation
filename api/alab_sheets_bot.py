@@ -330,7 +330,9 @@ async def post_call_update(request: Request):
                     )
                     summary = payload.get("analysis", {}).get("transcript_summary") or ""
 
-                    extracted = extract_variables(prompt_text, transcript_text, summary, var_names)
+                    extracted = extract_variables(
+                        prompt_text, transcript_text, summary, var_names, sheet_db.get("variable_descriptions")
+                    )
 
                     if extracted:
                         data_map = {

@@ -32,7 +32,13 @@ def _extract_json_text(raw: str) -> str:
     raise ValueError("Unable to parse valid JSON from model response")
 
 
-def extract_variables(prompt_text: str, transcript: str, summary: str, variable_names: list[str]) -> dict:
+def extract_variables(
+    prompt_text: str,
+    transcript: str,
+    summary: str,
+    variable_names: list[str],
+    variable_descriptions: dict[str, str] | None = None,
+) -> dict:
     """
     Ask Claude to derive the requested variables from a call transcript/summary.
     Returns {variable_name: value_or_None} with exactly the requested keys,
@@ -41,8 +47,14 @@ def extract_variables(prompt_text: str, transcript: str, summary: str, variable_
     if not variable_names:
         return {}
 
+    variable_descriptions = variable_descriptions or {}
+    variables_block = "\n".join(
+        f"- {name}: {variable_descriptions[name]}" if variable_descriptions.get(name) else f"- {name}"
+        for name in variable_names
+    )
+
     user_content = (
-        f"Variables to extract: {', '.join(variable_names)}\n\n"
+        f"Variables to extract:\n{variables_block}\n\n"
         f"Call summary:\n{summary or 'N/A'}\n\n"
         f"Transcript:\n{transcript or 'No transcript'}\n\n"
         "Respond with ONLY a valid JSON object (no markdown fences, no commentary) "

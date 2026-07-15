@@ -71,7 +71,9 @@ async def extraction_post_call(request: Request):
         )
         summary = payload.get("analysis", {}).get("transcript_summary") or ""
 
-        extracted = extract_variables(prompt_text, transcript_text, summary, var_names)
+        extracted = extract_variables(
+            prompt_text, transcript_text, summary, var_names, sheet_db.get("variable_descriptions")
+        )
         if not extracted:
             logger.warning(f"extraction_post_call: extraction returned nothing | sheet_id={sheet_db['id']}")
             return {"message": "Extraction failed"}

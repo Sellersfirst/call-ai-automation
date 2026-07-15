@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
+from psycopg2.extras import Json
 from config.database import get_connection
 
 router = APIRouter()
@@ -25,6 +26,7 @@ class SheetCreate(BaseModel):
     output_worksheet_name: Optional[str] = None
     variables_to_record: Optional[str] = None      # comma-separated variable names
     extraction_prompt_id: Optional[int] = None      # FK to prompts.id
+    variable_descriptions: Optional[Dict[str, str]] = None  # {variable_name: description}
 
 
 #  CREATE (Salesforce Job) 
@@ -58,6 +60,7 @@ class SheetUpdate(BaseModel):
     output_worksheet_name: Optional[str] = None
     variables_to_record: Optional[str] = None
     extraction_prompt_id: Optional[int] = None
+    variable_descriptions: Optional[Dict[str, str]] = None
 
 
 class SheetStatusUpdate(BaseModel):
@@ -86,9 +89,9 @@ def create_sheet(data: SheetCreate):
         cursor = conn.execute("""
             INSERT INTO sheets (
                 google_sheet_url, worksheet_name, agent_id, status, type, query, batch_size, retries_on_voicemail,
-                output_sheet_url, output_worksheet_name, variables_to_record, extraction_prompt_id
+                output_sheet_url, output_worksheet_name, variables_to_record, extraction_prompt_id, variable_descriptions
             )
-            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             data.google_sheet_url,
@@ -101,6 +104,7 @@ def create_sheet(data: SheetCreate):
             data.output_worksheet_name,
             data.variables_to_record,
             data.extraction_prompt_id,
+            Json(data.variable_descriptions) if data.variable_descriptions is not None else None,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)
@@ -191,6 +195,8 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
         update_data = data.dict(exclude={"schedule"}, exclude_unset=True)
         for key, value in update_data.items():
             if value is not None:
+                if key == "variable_descriptions":
+                    value = Json(value)
                 fields.append(f"{key}=%s")
                 values.append(value)
 
