@@ -17,10 +17,10 @@ def _direct_fields(payload: dict, transcript_text: str, event_timestamp: int | N
     Fields passed straight through from the ElevenLabs payload — no LLM involved.
     record_id/call_from/lead_owner are best-effort: they're only populated if the
     calling job threaded them through as dynamic_variables when the call was placed
-    (currently 'address' and 'lead_name' are set by alab_sheets_bot.py, and
-    ElevenLabs' own 'system__called_number' is set natively — everything else
-    will come through blank). call_from/call_to are also null for non-telephony
-    calls (e.g. web widget / react_sdk test calls have no phone number involved).
+    (currently 'address' is set by alab_sheets_bot.py, and ElevenLabs' own
+    'system__called_number' is set natively — everything else will come through
+    blank). call_from/call_to are also null for non-telephony calls (e.g. web
+    widget / react_sdk test calls have no phone number involved).
     """
     custom_vars = (
         payload.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
@@ -39,7 +39,6 @@ def _direct_fields(payload: dict, transcript_text: str, event_timestamp: int | N
         "Call From": custom_vars.get("system__caller_id") or custom_vars.get("call_from") or "",
         "Call To": custom_vars.get("system__called_number") or "",
         "Lead Owner": custom_vars.get("lead_owner") or "",
-        "Rep Name": custom_vars.get("lead_name") or "",
         "Timestamp": pacific_time,
         "Duration": metadata.get("call_duration_secs", ""),
         "Transcript": transcript_text,

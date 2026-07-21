@@ -74,8 +74,7 @@ async def trigger_calls(sheet_id: int):
                     phone_id    = DEFAULT_PHONE
                     called_from = DEFAULT_PHONE
 
-                lead_name = f"{lead.get('FIRST_NAME', '')} {lead.get('LAST_NAME', '')}".strip()
-                call_resp = await make_call(phone_id, phone, lead.get("Address"), agent_id, lead_name)
+                call_resp = await make_call(phone_id, phone, lead.get("Address"), agent_id)
 
                 if not call_resp:
                     logger.warning(f"Skipping lead — call failed: {phone}")
@@ -232,12 +231,7 @@ async def post_call_update(request: Request):
                         logger.error("Cannot retry — agent_id missing")
                         disposition = "Voicemail"
                     else:
-                        retry_lead_name = (
-                            payload.get("conversation_initiation_client_data", {})
-                                   .get("dynamic_variables", {})
-                                   .get("lead_name", "")
-                        )
-                        retry_resp = await make_call(phone_id, phone, "See Sheet", agent_id, retry_lead_name)
+                        retry_resp = await make_call(phone_id, phone, "See Sheet", agent_id)
 
                         if retry_resp:
                             new_conv_id = retry_resp.get("conversation_id")
