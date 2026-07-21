@@ -27,7 +27,7 @@ from config.database import (
 )
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
-from config.config import ANTHROPIC_API_KEY
+from config.config import ANTHROPIC_API_KEY, ANTHROPIC_API_KEY_RUBRIC
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +390,7 @@ async def _score_with_claude(transcript: str) -> dict:
       5. Persist the new user turn and Claude's reply to conversation_messages.
       6. Parse and return the JSON analysis.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY_RUBRIC)
     system_prompt = _load_active_system_prompt()
 
     current_prompt = (

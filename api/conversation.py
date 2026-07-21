@@ -7,7 +7,7 @@ import anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from config.config import ANTHROPIC_API_KEY
+from config.config import ANTHROPIC_API_KEY_RUBRIC
 from config.database import (
     add_conversation_message,
     clear_conversation_messages,
@@ -70,7 +70,7 @@ def _call_claude(user_message: str, prompt_id: int) -> str:
     Send user_message to Claude with the full recent conversation history
     as context, then return Claude's plain-text reply.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY_RUBRIC)
     system_prompt = _load_active_system_prompt()
 
     history = get_recent_conversation_messages(
