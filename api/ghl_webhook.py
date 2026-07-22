@@ -38,6 +38,7 @@ _SHEET_HEADERS = [
     "Call To",
     "Lead Owner",
     "Timestamp",
+    "Rep Name",
     "Duration",
     "Lead Score",
     "Overall Score",
@@ -47,8 +48,10 @@ _SHEET_HEADERS = [
     "DNC Score",
     "Closing Score",
     "Rapport Score",
+    "Evidence Collection",
     "Call Summary",
     "Rep Feedback",
+    "Evidence Pitch Score Evaluation",
     "Next Best Action",
     "Missed Questions",
     "Transcript",
@@ -113,7 +116,17 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         "Score this GHL call transcript and return ONLY valid JSON using this exact shape: "
         '{"scores":{"evidence_pitch":0,"screenshot_coaching":0,"retainer_agreement":0,'
         '"dnc":0,"evidence_coaching":0,"closing":0,"rapport":0,"overall":0,"lead":0},'
-        '"call_summary":"","next_best_action":"","rep_feedback":"","missed_questions":[]}. '
+        '"call_summary":"","next_best_action":"","rep_feedback":"","missed_questions":[],'
+        '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":""}. '
+        "rep_name: the name of the person being called (the lead/prospect), NOT the person making the call — "
+        "reps are not fixed-assigned to leads, so ignore any self-introduced caller name (e.g. \"Hi, this is Alex "
+        "calling from...\"). Use null if the lead's name is never mentioned or confirmed. "
+        "evidence_collection: a 2-3 sentence explanation of the client's evidence status — whether they confirmed "
+        "having evidence, agreed or were willing to send it, and whether they said they'd submit it during the call "
+        "or later. Be concrete, quote or paraphrase the relevant exchange, do not infer unstated information. "
+        "evidence_pitch_evaluation: a 2-3 sentence explanation of why the evidence_pitch score was given, citing "
+        "specific transcript moments — what the rep did or didn't do relative to the rubric, whether the client "
+        "agreed, whether an objection was handled, and whether live evidence/screenshot submission actually started. "
         "Do not include commentary, markdown fences, or extra text.\n\n"
         f"Transcript:\n\n{transcript}"
     )
@@ -294,6 +307,7 @@ def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) ->
         record.get("call_to", ""),
         record.get("lead_owner", _GHL_OWNER_FALLBACK),
         _format_timestamp(record.get("timestamp")),
+        analysis.get("rep_name") or "",
         record.get("duration", ""),
         scores.get("lead", ""),
         scores.get("overall", ""),
@@ -303,8 +317,10 @@ def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) ->
         scores.get("dnc", ""),
         scores.get("closing", ""),
         scores.get("rapport", ""),
+        analysis.get("evidence_collection") or "",
         analysis.get("call_summary", ""),
         analysis.get("rep_feedback", ""),
+        analysis.get("evidence_pitch_evaluation") or "",
         analysis.get("next_best_action", ""),
         missed_questions_text,
         record.get("transcript", ""),
