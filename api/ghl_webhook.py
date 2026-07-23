@@ -54,7 +54,6 @@ _SHEET_HEADERS = [
     "Evidence Pitch Score Evaluation",
     "Next Best Action",
     "Missed Questions",
-    "Transcript",
 ]
 
 
@@ -323,7 +322,6 @@ def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) ->
         analysis.get("evidence_pitch_evaluation") or "",
         analysis.get("next_best_action", ""),
         missed_questions_text,
-        record.get("transcript", ""),
     ]
 
     worksheet.append_row(row, value_input_option="USER_ENTERED")
