@@ -126,7 +126,7 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         "evidence_pitch_evaluation: a 2-3 sentence explanation of why the evidence_pitch score was given, citing "
         "specific transcript moments — what the rep did or didn't do relative to the rubric, whether the client "
         "agreed, whether an objection was handled, and whether live evidence/screenshot submission actually started. "
-        "Do not include commentary, markdown fences, or extra text.\n\n"
+        "Do not include commentary, markdown fences, or extra text.\n\n "
         f"Transcript:\n\n{transcript}"
     )
 
