@@ -117,9 +117,9 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         '"dnc":0,"evidence_coaching":0,"closing":0,"rapport":0,"overall":0,"lead":0},'
         '"call_summary":"","next_best_action":"","rep_feedback":"","missed_questions":[],'
         '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":""}. '
-        "rep_name: the name of the person being called (the lead/prospect), NOT the person making the call — "
-        "reps are not fixed-assigned to leads, so ignore any self-introduced caller name (e.g. \"Hi, this is Alex "
-        "calling from...\"). Use null if the lead's name is never mentioned or confirmed. "
+        "rep_name: the name of the agent/rep making the call, NOT the lead/prospect being called — "
+        "look for the caller's self-introduction (e.g. \"Hi, this is Alex calling from...\") and use that name. "
+        "Ignore any name belonging to the lead/prospect. Use null if the rep's name is never mentioned. "
         "evidence_collection: a 2-3 sentence explanation of the client's evidence status — whether they confirmed "
         "having evidence, agreed or were willing to send it, and whether they said they'd submit it during the call "
         "or later. Be concrete, quote or paraphrase the relevant exchange, do not infer unstated information. "
