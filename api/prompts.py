@@ -1,10 +1,17 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from config.database import get_connection
+from core.auth import get_current_user, require_admin, get_accessible_prompt_ids
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/prompts", tags=["Prompts"])
+
+
+def _assert_prompt_access(prompt_id: int, user: dict) -> None:
+    accessible = get_accessible_prompt_ids(user)
+    if accessible is not None and prompt_id not in accessible:
+        raise HTTPException(status_code=403, detail="You do not have access to this prompt")
 
 
 class PromptCreate(BaseModel):
@@ -29,14 +36,21 @@ class PromptResponse(BaseModel):
 
 
 @router.get("", response_model=list[PromptResponse])
-async def get_prompts():
-    """Get all prompts."""
+async def get_prompts(user: dict = Depends(get_current_user)):
+    """Get all prompts accessible to the current user (all of them, for admins)."""
     try:
+        accessible_ids = get_accessible_prompt_ids(user)
         with get_connection() as conn:
-            rows = conn.execute(
-                "SELECT id, prompt_text, type, active, created_at, updated_at FROM prompts ORDER BY id DESC"
-            ).fetchall()
-            
+            if accessible_ids is None:
+                rows = conn.execute(
+                    "SELECT id, prompt_text, type, active, created_at, updated_at FROM prompts ORDER BY id DESC"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, prompt_text, type, active, created_at, updated_at FROM prompts WHERE id = ANY(%s) ORDER BY id DESC",
+                    (accessible_ids,),
+                ).fetchall()
+
             return [
                 PromptResponse(
                     id=row["id"],
@@ -54,8 +68,9 @@ async def get_prompts():
 
 
 @router.get("/active", response_model=PromptResponse)
-async def get_active_prompt(prompt_id: int):
+async def get_active_prompt(prompt_id: int, user: dict = Depends(get_current_user)):
     """Get a prompt by ID."""
+    _assert_prompt_access(prompt_id, user)
     try:
         with get_connection() as conn:
             row = conn.execute(
@@ -81,7 +96,7 @@ async def get_active_prompt(prompt_id: int):
         raise HTTPException(status_code=500, detail="Failed to fetch prompt")
 
 
-@router.post("", response_model=PromptResponse)
+@router.post("", response_model=PromptResponse, dependencies=[Depends(require_admin)])
 async def create_prompt(data: PromptCreate):
     """Create a new prompt."""
     try:
@@ -106,7 +121,7 @@ async def create_prompt(data: PromptCreate):
         raise HTTPException(status_code=500, detail="Failed to create prompt")
 
 
-@router.delete("/{prompt_id}")
+@router.delete("/{prompt_id}", dependencies=[Depends(require_admin)])
 async def delete_prompt(prompt_id: int):
     """Delete a prompt by ID."""
     try:
@@ -124,8 +139,9 @@ async def delete_prompt(prompt_id: int):
 
 
 @router.put("/{prompt_id}", response_model=PromptResponse)
-async def update_prompt(prompt_id: int, data: PromptUpdate):
+async def update_prompt(prompt_id: int, data: PromptUpdate, user: dict = Depends(get_current_user)):
     """Update a prompt by ID."""
+    _assert_prompt_access(prompt_id, user)
     try:
         with get_connection() as conn:
             # Check if prompt exists

@@ -4,6 +4,7 @@ import psycopg2.extras
 import logging, os, time
 from contextlib import contextmanager
 import pytz
+import bcrypt
 
 logger = logging.getLogger("db")
 
@@ -347,6 +348,50 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_conversation_messages_id
         ON conversation_messages(id)
         """)
+
+        # ----------------------------------------------------------------
+        #  AUTH: users + per-user job/prompt access grants
+        # ----------------------------------------------------------------
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_job_access (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, sheet_id)
+        )
+        """)
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_prompt_access (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, prompt_id)
+        )
+        """)
+
+        # Bootstrap the first admin from env vars, only if no users exist yet
+        initial_admin_email = os.getenv("INITIAL_ADMIN_EMAIL")
+        initial_admin_password = os.getenv("INITIAL_ADMIN_PASSWORD")
+        if initial_admin_email and initial_admin_password:
+            existing = conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+            if not existing:
+                password_hash = bcrypt.hashpw(
+                    initial_admin_password.encode("utf-8"), bcrypt.gensalt()
+                ).decode("utf-8")
+                conn.execute(
+                    "INSERT INTO users (email, password_hash, role) VALUES (%s, %s, 'admin')",
+                    (initial_admin_email, password_hash),
+                )
+                logger.info(f"Bootstrapped initial admin user: {initial_admin_email}")
 
         conn.commit()
         logger.info("Database initialized")

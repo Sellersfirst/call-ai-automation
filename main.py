@@ -21,6 +21,7 @@ from api.prompts import router as PromptsRouter
 from api.agent_memory_webhook import router as AgentMemoryRouter
 from api.conversation import router as ConversationRouter
 from api.extraction_webhook import router as ExtractionRouter
+from api.auth import router as AuthRouter
 from core.celery_app import run_scheduler
 
 
@@ -76,6 +77,7 @@ app.include_router(PromptsRouter,       prefix="/api",              tags=["Promp
 app.include_router(AgentMemoryRouter,   prefix="/api/agent-memory", tags=["Agent Memory"])
 app.include_router(ConversationRouter,  prefix="/api",              tags=["Conversation"])
 app.include_router(ExtractionRouter,    prefix="/api/extraction",   tags=["Variable Extraction"])
+app.include_router(AuthRouter,          prefix="/api",              tags=["Auth"])
 
 @app.get("/test-scheduler")
 def test_scheduler():

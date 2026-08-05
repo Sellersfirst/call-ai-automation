@@ -1,10 +1,17 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Dict, Optional
 from psycopg2.extras import Json
 from config.database import get_connection
+from core.auth import get_current_user, require_admin, get_accessible_sheet_ids
 
 router = APIRouter()
+
+
+def _assert_sheet_access(sheet_id: int, user: dict) -> None:
+    accessible = get_accessible_sheet_ids(user)
+    if accessible is not None and sheet_id not in accessible:
+        raise HTTPException(status_code=403, detail="You do not have access to this job")
 
 
 #  INNER MODEL 
@@ -83,7 +90,7 @@ def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
 
 #  CREATE — Google Sheet Job
 
-@router.post("/sheets")
+@router.post("/sheets", dependencies=[Depends(require_admin)])
 def create_sheet(data: SheetCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
@@ -115,7 +122,7 @@ def create_sheet(data: SheetCreate):
 
 #  CREATE — Salesforce Job
 
-@router.post("/sheets/salesforce")
+@router.post("/sheets/salesforce", dependencies=[Depends(require_admin)])
 def create_salesforce_job(data: SalesforceJobCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
@@ -148,7 +155,8 @@ def get_sheets(
     status: Optional[bool] = Query(None),
     type: Optional[str] = Query(None),   # 'google_sheet_job' or 'salesforce_job'
     limit: int = 10,
-    offset: int = 0
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
 ):
     with get_connection() as conn:
         conditions = []
@@ -161,6 +169,11 @@ def get_sheets(
         if type is not None:
             conditions.append("type=%s")
             params.append(type)
+
+        accessible_ids = get_accessible_sheet_ids(user)
+        if accessible_ids is not None:
+            conditions.append("id = ANY(%s)")
+            params.append(accessible_ids)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"SELECT * FROM sheets {where_clause} ORDER BY created_at DESC LIMIT %s OFFSET %s"
@@ -187,7 +200,8 @@ def get_sheets(
 
 
 @router.put("/sheets/{sheet_id}")
-def update_sheet(sheet_id: int, data: SheetUpdate):
+def update_sheet(sheet_id: int, data: SheetUpdate, user: dict = Depends(get_current_user)):
+    _assert_sheet_access(sheet_id, user)
     with get_connection() as conn:
         fields = []
         values = []
@@ -219,7 +233,8 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
 #  TOGGLE STATUS
 
 @router.patch("/sheets/{sheet_id}/status")
-def toggle_status(sheet_id: int, data: SheetStatusUpdate):
+def toggle_status(sheet_id: int, data: SheetStatusUpdate, user: dict = Depends(get_current_user)):
+    _assert_sheet_access(sheet_id, user)
     with get_connection() as conn:
         conn.execute(
             "UPDATE sheets SET status=%s WHERE id=%s",
@@ -234,7 +249,7 @@ def toggle_status(sheet_id: int, data: SheetStatusUpdate):
 #  DELETE
 
 
-@router.delete("/sheets/{sheet_id}")
+@router.delete("/sheets/{sheet_id}", dependencies=[Depends(require_admin)])
 def delete_sheet(sheet_id: int):
     with get_connection() as conn:
         conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=%s", (sheet_id,))

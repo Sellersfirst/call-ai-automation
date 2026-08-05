@@ -18,6 +18,7 @@ from config.database import (
     CONVERSATION_HISTORY_LIMIT,
 )
 from core.security import verify_admin
+from core.auth import get_current_user, get_accessible_prompt_ids
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +101,14 @@ def _call_claude(user_message: str, prompt_id: int) -> str:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+def _assert_prompt_access(prompt_id: int, user: dict) -> None:
+    accessible = get_accessible_prompt_ids(user)
+    if accessible is not None and prompt_id not in accessible:
+        raise HTTPException(status_code=403, detail="You do not have access to this prompt")
+
+
 @router.get("/conversation")
-async def get_conversation(prompt_id: int) -> list[dict[str, Any]]:
+async def get_conversation(prompt_id: int, user: dict = Depends(get_current_user)) -> list[dict[str, Any]]:
     """
     Return every message for a prompt_id ordered oldest → newest.
 
@@ -111,6 +118,7 @@ async def get_conversation(prompt_id: int) -> list[dict[str, Any]]:
             ...
         ]
     """
+    _assert_prompt_access(prompt_id, user)
     rows = get_all_conversation_messages(prompt_id=prompt_id)
     # Convert datetime objects to ISO strings so they serialise cleanly
     return [
@@ -125,7 +133,9 @@ async def get_conversation(prompt_id: int) -> list[dict[str, Any]]:
 
 
 @router.post("/conversation/message", response_model=MessageResponse)
-async def post_conversation_message(body: MessageRequest, prompt_id: int) -> MessageResponse:
+async def post_conversation_message(
+    body: MessageRequest, prompt_id: int, user: dict = Depends(get_current_user)
+) -> MessageResponse:
     """
     Blake sends a message.
 
@@ -134,6 +144,7 @@ async def post_conversation_message(body: MessageRequest, prompt_id: int) -> Mes
     3. Persist Claude's reply as message_from="assistant".
     4. Return both IDs and the reply text.
     """
+    _assert_prompt_access(prompt_id, user)
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message must not be empty")
 
