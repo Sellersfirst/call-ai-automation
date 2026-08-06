@@ -12,6 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from config.database import get_connection
 from utils.phone_utils import phones_match
 from utils.sheet_utils import extract_sheet_id
+from utils.area_code_geo import load_area_code_coords, find_nearest_area_code
 
 logger = logging.getLogger("sheets_repo")
 
@@ -64,7 +65,28 @@ def load_area_code_map():
         number   = row.get("Number")
         if area and phone_id:
             area_map[area] = [phone_id, number]
-    logger.info(f"Loaded {len(area_map)} area mappings")
+    logger.info(f"Loaded {len(area_map)} direct area mappings")
+
+    # Any area code we own a number for, but that isn't directly mapped above,
+    # gets assigned the mapping of its geographically nearest mapped area code
+    # instead of being left to fall back to a single default number.
+    try:
+        coords = load_area_code_coords()
+        mapped_codes = list(area_map.keys())
+        unmapped_codes = [a for a in coords if a not in area_map]
+
+        assigned = 0
+        for area in unmapped_codes:
+            nearest = find_nearest_area_code(area, mapped_codes, coords)
+            if nearest:
+                area_map[area] = area_map[nearest]
+                assigned += 1
+
+        logger.info(f"Assigned {assigned} additional area codes to their nearest mapped neighbor")
+    except Exception as exc:
+        logger.error(f"Failed to fill in nearest-neighbor area codes: {exc}", exc_info=True)
+
+    logger.info(f"Loaded {len(area_map)} total area mappings")
     return area_map
 
 
