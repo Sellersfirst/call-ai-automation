@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import resend
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -27,14 +26,23 @@ from config.database import (
 )
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
+from utils.email import send_email
 from config.config import ANTHROPIC_API_KEY, ANTHROPIC_API_KEY_RUBRIC
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/smrt", tags=["smrt"])
 
-_EMAIL_RECIPIENTS = ["connorg@sellersfirstre.com", "blakef@sellersfirstre.com"]
 _EMAIL_SUBJECT = "call rubrics"
+
+# Salesforce owner names are mapped to their rubric email recipients. Keep the
+# keys normalized so minor differences in case or whitespace do not block email.
+_OWNER_EMAILS = {
+    "michael villegas": "michaelv@sellersfirstre.com",
+    "shelby nassar": "shelbyn@sellersfirstre.com",
+    "hunter petersen": "hunterp@sellersfirstre.com",
+    "paul keith": "paulk@sellersfirstre.com",
+}
 
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 _SMRT_WORKSHEET_NAME  = "Scoring Rubrics"
@@ -814,25 +822,27 @@ async def _update_salesforce_lead_score(sf_id: str, sf_record_url: str, analysis
 
 async def _send_email(analysis: dict, record: dict) -> None:
     """
-    Send call analysis email via Resend API to configured recipients.
-    Uses the same formatted content as Salesforce Chatter.
+    Send the rubric to the Salesforce opportunity owner, or lead owner when no
+    opportunity owner is available. Uses the same content as Salesforce Chatter.
     """
+    owner_name = record.get("opportunity_owner") or record.get("lead_owner")
+    normalized_owner = " ".join(str(owner_name or "").split()).casefold()
+    recipient = _OWNER_EMAILS.get(normalized_owner)
+
+    if not recipient:
+        logger.warning(
+            "Skipping rubric email: no email mapping for opportunity_owner=%r, lead_owner=%r",
+            record.get("opportunity_owner"),
+            record.get("lead_owner"),
+        )
+        return
+
     try:
         body_text = _build_chatter_body(analysis, record)
-
-        resend.api_key = os.environ.get("RESEND_API_KEY")
-
-        resend.Emails.send({
-            "from": "onboarding@resend.dev",
-            "to": _EMAIL_RECIPIENTS,
-            "subject": _EMAIL_SUBJECT,
-            "text": body_text,
-        })
-
-        logger.info("Email sent to %s | subject=%s", ", ".join(_EMAIL_RECIPIENTS), _EMAIL_SUBJECT)
+        send_email(body_text, recipient, subject=_EMAIL_SUBJECT)
 
     except Exception as exc:
-        logger.error("Failed to send email: %s", exc)
+        logger.error("Failed to send rubric email to %s: %s", recipient, exc)
 
 
 def _get_sheets_client() -> gspread.Client:
