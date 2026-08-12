@@ -19,10 +19,10 @@ def send_email(content: str, to_email: str, subject: str = "call rubrics"):
 
     The Resend API key is read from ``RESEND_API_KEY`` and the sender can be
     overridden with ``RESEND_FROM_EMAIL``. When no Resend API key is present,
-    Gmail SMTP is used with ``GMAIL_SMTP_EMAIL`` and
-    ``GMAIL_SMTP_APP_PASSWORD`` (a Google App Password, not the account
-    password). ``SMTP_USERNAME`` and ``SMTP_PASSWORD`` are accepted as generic
-    alternatives.
+    Gmail SMTP is used with ``GMAIL_SENDER_EMAIL`` and ``GMAIL_APP_PASSWORD``
+    (a Google App Password, not the account password). The older
+    ``GMAIL_SMTP_EMAIL``/``GMAIL_SMTP_APP_PASSWORD`` and generic SMTP variable
+    names are also accepted.
     """
     if not isinstance(content, str) or not content.strip():
         raise ValueError("Email content must be a non-empty string")
@@ -50,16 +50,24 @@ def send_email(content: str, to_email: str, subject: str = "call rubrics"):
 
 def _send_via_gmail_smtp(content: str, to_email: str, subject: str):
     """Send an email through Gmail's TLS SMTP endpoint."""
-    username = os.environ.get("GMAIL_SMTP_EMAIL") or os.environ.get("SMTP_USERNAME")
-    password = os.environ.get("GMAIL_SMTP_APP_PASSWORD") or os.environ.get("SMTP_PASSWORD")
+    username = (
+        os.environ.get("GMAIL_SENDER_EMAIL")
+        or os.environ.get("GMAIL_SMTP_EMAIL")
+        or os.environ.get("SMTP_USERNAME")
+    )
+    password = (
+        os.environ.get("GMAIL_APP_PASSWORD")
+        or os.environ.get("GMAIL_SMTP_APP_PASSWORD")
+        or os.environ.get("SMTP_PASSWORD")
+    )
     if not username or not password:
         raise RuntimeError(
-            "RESEND_API_KEY is not configured. Set GMAIL_SMTP_EMAIL and "
-            "GMAIL_SMTP_APP_PASSWORD to use the Gmail SMTP fallback."
+            "RESEND_API_KEY is not configured. Set GMAIL_SENDER_EMAIL and "
+            "GMAIL_APP_PASSWORD to use the Gmail SMTP fallback."
         )
 
     message = EmailMessage()
-    message["From"] = os.environ.get("GMAIL_SMTP_FROM_EMAIL", username)
+    message["From"] = os.environ.get("GMAIL_SENDER_EMAIL", username)
     message["To"] = to_email
     message["Subject"] = subject
     message.set_content(content)
