@@ -41,7 +41,7 @@ _OWNER_EMAILS = {
     "michael villegas": "michaelv@sellersfirstre.com",
     "shelby nassar": "shelbyn@sellersfirstre.com",
     "hunter petersen": "hunterp@sellersfirstre.com",
-    "paul keith": "paulk@sellersfirstre.com",
+    "paul kim": "paulk@sellersfirstre.com",
 }
 
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
