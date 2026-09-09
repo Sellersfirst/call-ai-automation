@@ -47,6 +47,7 @@ _SHEET_HEADERS = [
     "Retainer Score",
     "DNC Score",
     "DNC",
+    "DNC Context",
     "Closing Score",
     "Rapport Score",
     "Evidence Collection",
@@ -117,7 +118,8 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         '{"scores":{"evidence_pitch":0,"screenshot_coaching":0,"retainer_agreement":0,'
         '"dnc":0,"evidence_coaching":0,"closing":0,"rapport":0,"overall":0,"lead":0},'
         '"call_summary":"","next_best_action":"","rep_feedback":"","missed_questions":[],'
-        '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":"","dnc_status":"notasked"}. '
+        '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":"","dnc_status":"notasked",'
+        '"dnc_context":""}. '
         "rep_name: the name of the agent/rep making the call, NOT the lead/prospect being called — "
         "look for the caller's self-introduction (e.g. \"Hi, this is Alex calling from...\") and use that name. "
         "Ignore any name belonging to the lead/prospect. Use null if the rep's name is never mentioned. "
@@ -132,6 +134,11 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         "ARE on the DNC list, \"no\" if the rep asked and the client said they are NOT on the DNC list, or "
         "\"notasked\" if the representative never asked about the DNC list at all. Do not output any other word, "
         "phrase, or explanation for this field. "
+        "dnc_context: broader context on the DNC discussion — did the caller (rep) ask about the Do Not Call list, "
+        "and what happened around it? Write 1-2 sentences describing when/how it came up (or note that it never "
+        "came up, and why if evident — e.g. call ended early), what was said, and the client's exact response. "
+        "Quote or paraphrase the relevant exchange. This is a free-text explanation, unlike dnc_status which must "
+        "stay a single word. Use empty string if there's nothing relevant to report. "
         "Do not include commentary, markdown fences, or extra text.\n\n "
         f"Transcript:\n\n{transcript}"
     )
@@ -329,6 +336,7 @@ def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) ->
         scores.get("retainer_agreement", ""),
         scores.get("dnc", ""),
         _normalize_dnc_status(analysis.get("dnc_status")),
+        analysis.get("dnc_context") or "",
         scores.get("closing", ""),
         scores.get("rapport", ""),
         analysis.get("evidence_collection") or "",
