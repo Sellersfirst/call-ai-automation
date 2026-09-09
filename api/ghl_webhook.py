@@ -46,6 +46,7 @@ _SHEET_HEADERS = [
     "Screenshot Coaching Score",
     "Retainer Score",
     "DNC Score",
+    "DNC",
     "Closing Score",
     "Rapport Score",
     "Evidence Collection",
@@ -116,7 +117,7 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         '{"scores":{"evidence_pitch":0,"screenshot_coaching":0,"retainer_agreement":0,'
         '"dnc":0,"evidence_coaching":0,"closing":0,"rapport":0,"overall":0,"lead":0},'
         '"call_summary":"","next_best_action":"","rep_feedback":"","missed_questions":[],'
-        '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":""}. '
+        '"rep_name":null,"evidence_collection":"","evidence_pitch_evaluation":"","dnc_status":"notasked"}. '
         "rep_name: the name of the agent/rep making the call, NOT the lead/prospect being called — "
         "look for the caller's self-introduction (e.g. \"Hi, this is Alex calling from...\") and use that name. "
         "Ignore any name belonging to the lead/prospect. Use null if the rep's name is never mentioned. "
@@ -126,6 +127,11 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
         "evidence_pitch_evaluation: a 2-3 sentence explanation of why the evidence_pitch score was given, citing "
         "specific transcript moments — what the rep did or didn't do relative to the rubric, whether the client "
         "agreed, whether an objection was handled, and whether live evidence/screenshot submission actually started. "
+        "dnc_status: whether the representative asked the client if they are on the Do Not Call (DNC) registry/list "
+        "during this call. Answer with exactly one lowercase word and nothing else: \"yes\" if the client said they "
+        "ARE on the DNC list, \"no\" if the rep asked and the client said they are NOT on the DNC list, or "
+        "\"notasked\" if the representative never asked about the DNC list at all. Do not output any other word, "
+        "phrase, or explanation for this field. "
         "Do not include commentary, markdown fences, or extra text.\n\n "
         f"Transcript:\n\n{transcript}"
     )
@@ -283,6 +289,14 @@ def _ensure_header_row(worksheet: gspread.Worksheet) -> None:
         logger.info("GHL header row written to worksheet id=%s", _GHL_WORKSHEET_ID)
 
 
+_DNC_STATUS_VALUES = {"yes", "no", "notasked"}
+
+
+def _normalize_dnc_status(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _DNC_STATUS_VALUES else "notasked"
+
+
 def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) -> None:
     gc = _get_sheets_client()
     spreadsheet = gc.open_by_key(_GHL_SHEET_ID)
@@ -314,6 +328,7 @@ def _append_to_google_sheet(record: dict[str, Any], analysis: dict[str, Any]) ->
         scores.get("screenshot_coaching", ""),
         scores.get("retainer_agreement", ""),
         scores.get("dnc", ""),
+        _normalize_dnc_status(analysis.get("dnc_status")),
         scores.get("closing", ""),
         scores.get("rapport", ""),
         analysis.get("evidence_collection") or "",
