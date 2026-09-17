@@ -16,10 +16,19 @@ logger = logging.getLogger("scheduler")
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # CELERY INIT 
+broker_url = os.getenv("CELERY_BROKER_URL")
+result_backend = os.getenv("CELERY_RESULT_BACKEND")
+
+if not broker_url:
+    raise RuntimeError("CELERY_BROKER_URL is not set")
+
+if not result_backend:
+    raise RuntimeError("CELERY_RESULT_BACKEND is not set")
+
 celery = Celery(
     "scheduler",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/0"
+    broker=broker_url,
+    backend=result_backend,
 )
 
 celery.conf.timezone = "America/Los_Angeles"
