@@ -202,7 +202,7 @@ def log_to_sheets(
             disposition, timestamp_str,
         )
 
-        row = [data_map.get(col, "") for col in headers]
+        row = [data_map.get(col.strip(), "") for col in headers]
         sheet.append_row(row, value_input_option="USER_ENTERED")
         logger.info(f"log_to_sheets: row added for lead {lead_id} | disposition={disposition}")
 
@@ -279,12 +279,12 @@ def update_sheet_row(
                 f"update_sheet_row: no row found for called_to={called_to} "
                 f"(lead {lead_id}) — appending new row as fallback"
             )
-            row = [data_map.get(col, "") for col in headers]
+            row = [data_map.get(col.strip(), "") for col in headers]
             sheet.append_row(row, value_input_option="USER_ENTERED")
             return
 
         #  Overwrite matched row in one batch call 
-        new_row  = [data_map.get(col, "") for col in headers]
+        new_row  = [data_map.get(col.strip(), "") for col in headers]
         col_end  = len(headers)
         range_a1 = (
             f"A{matched_row}:{chr(64 + col_end)}{matched_row}"
