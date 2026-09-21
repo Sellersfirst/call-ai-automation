@@ -1,9 +1,11 @@
 """Small wrapper around Resend for sending plain-text emails."""
 
+import json
 import logging
 import os
 import smtplib
 import ssl
+import urllib.request
 from email.message import EmailMessage
 
 
@@ -12,6 +14,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_FROM_EMAIL = "onboarding@resend.dev"
 GMAIL_SMTP_HOST = "smtp.gmail.com"
 GMAIL_SMTP_PORT = 587
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 def send_email(content: str, to_email: str, subject: str = "call rubrics"):
@@ -32,6 +35,14 @@ def send_email(content: str, to_email: str, subject: str = "call rubrics"):
         raise ValueError("Recipient email must be a non-empty string")
 
     to_email = to_email.strip()
+
+    # Brevo goes over HTTPS, so it works on hosts (e.g. Railway) that block SMTP.
+    if os.environ.get("BREVO_API_KEY"):
+        try:
+            return _send_via_brevo(content, to_email, subject)
+        except Exception as exc:
+            logger.error("Brevo send to %s failed: %s", to_email, exc)
+
     api_key = os.environ.get("RESEND_API_KEY")
     if api_key:
         # Import only when an email is actually sent so unrelated application
@@ -55,6 +66,42 @@ def send_email(content: str, to_email: str, subject: str = "call rubrics"):
             )
 
     return _send_via_gmail_smtp(content, to_email, subject)
+
+
+def _send_via_brevo(content: str, to_email: str, subject: str):
+    """Send a plain-text email through Brevo's HTTPS API.
+
+    Needs ``BREVO_API_KEY`` and ``BREVO_SENDER_EMAIL`` (a sender verified in
+    Brevo); ``BREVO_SENDER_NAME`` is optional.
+    """
+    sender_email = os.environ.get("BREVO_SENDER_EMAIL")
+    if not sender_email:
+        raise RuntimeError("BREVO_SENDER_EMAIL is not set")
+
+    payload = {
+        "sender": {
+            "email": sender_email,
+            "name": os.environ.get("BREVO_SENDER_NAME", "Sellers First"),
+        },
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": content,
+    }
+    request = urllib.request.Request(
+        BREVO_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "api-key": os.environ["BREVO_API_KEY"],
+            "content-type": "application/json",
+            "accept": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        body = json.loads(response.read().decode("utf-8") or "{}")
+
+    logger.info("Email sent through Brevo to %s | subject=%s", to_email, subject)
+    return body
 
 
 def _send_via_gmail_smtp(content: str, to_email: str, subject: str):
