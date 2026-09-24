@@ -4,10 +4,10 @@ import logging
 import re
 from typing import Any
 
-import anthropic
 import gspread
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from services.llm_service import complete_text
 from google.oauth2.service_account import Credentials
 
 logger = logging.getLogger("app")
@@ -16,8 +16,6 @@ router = APIRouter()
 
 SPREADSHEET_ID    = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = "claude-sonnet-4-6"
 
 SHEET_LMI  = "LMI Data Extraction"
 SHEET_LMD  = "LMD Data Extraction"
@@ -100,9 +98,6 @@ Rules:
 
 def build_memory_brief(sheet_data: dict[str, list[dict[str, Any]]], phone_number: str) -> str:
     """Pass all matched sheet rows to Claude and return a memory brief string."""
-    if not ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY env var is not set.")
-
     if not sheet_data:
         return "No prior interaction history found for this number."
 
@@ -117,12 +112,7 @@ def build_memory_brief(sheet_data: dict[str, list[dict[str, Any]]], phone_number
                     data_block += f"  {col}: {val}\n"
         data_block += "\n"
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=600,
-        system=SYSTEM_PROMPT,
-        messages=[
+    return complete_text(SYSTEM_PROMPT, [
             {
                 "role": "user",
                 "content": (
@@ -131,9 +121,7 @@ def build_memory_brief(sheet_data: dict[str, list[dict[str, Any]]], phone_number
                     + data_block
                 ),
             }
-        ],
-    )
-    return message.content[0].text.strip()
+        ], 600)
 
 
 #  Route 

@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from config.config import ANTHROPIC_API_KEY_RUBRIC
+from services.llm_service import complete_text
 from config.database import (
     add_conversation_message,
     clear_conversation_messages,
@@ -71,7 +71,6 @@ def _call_claude(user_message: str, prompt_id: int) -> str:
     Send user_message to Claude with the full recent conversation history
     as context, then return Claude's plain-text reply.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY_RUBRIC)
     system_prompt = _load_active_system_prompt()
 
     history = get_recent_conversation_messages(
@@ -87,14 +86,7 @@ def _call_claude(user_message: str, prompt_id: int) -> str:
     messages.append({"role": "user", "content": user_message})
     messages = _normalise_messages(messages)
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=messages,
-    )
-
-    return (response.content[0].text or "").strip()
+    return complete_text(system_prompt, messages, 1024, anthropic_api_key=ANTHROPIC_API_KEY_RUBRIC)
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +146,8 @@ async def post_conversation_message(
     try:
         reply = _call_claude(body.message, prompt_id=prompt_id)
     except Exception as exc:
-        logger.error("Claude API error in conversation endpoint: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Claude API error: {exc}") from exc
+        logger.error("AI API error in conversation endpoint: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     assistant_msg_id = add_conversation_message("assistant", reply, prompt_id=prompt_id)
 

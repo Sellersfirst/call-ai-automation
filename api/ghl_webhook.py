@@ -8,13 +8,13 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import anthropic
 import gspread
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from google.oauth2.service_account import Credentials
 
 from config.config import ANTHROPIC_API_KEY
+from services.llm_service import complete_text
 from config.database import (
     add_conversation_message,
     get_active_prompt_with_id,
@@ -107,7 +107,6 @@ async def _run_pipeline(record: dict[str, Any]) -> None:
 
 
 async def _score_with_claude(transcript: str) -> dict[str, Any]:
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     system_prompt, prompt_id = get_active_prompt_with_id("ghl_rubrics")
     if not system_prompt or system_prompt == "insert prompt here":
@@ -152,13 +151,7 @@ async def _score_with_claude(transcript: str) -> dict[str, Any]:
     messages.append({"role": "user", "content": current_prompt})
     messages = _normalise_messages(messages)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=system_prompt,
-        messages=messages,
-    )
-    raw = (message.content[0].text or "").strip()
+    raw = complete_text(system_prompt, messages, 2048, json_mode=True)
 
     if prompt_id is not None:
         try:

@@ -4,7 +4,6 @@ import logging
 import re
 from datetime import datetime
 
-import anthropic
 import pytz
 from fastapi import APIRouter, Request
 import csv
@@ -12,6 +11,7 @@ import os
 import uuid
 
 from clients.client import get_client
+from services.llm_service import complete_text
 from config.config import DEFAULT_PHONE, SF_INSTANCE_URL, ELEVEN_LABS_KEY, ANTHROPIC_API_KEY
 from config.database import (
     create_call_log,
@@ -100,7 +100,6 @@ async def _generate_analysis_from_transcript(transcript: str, conv_id: str = Non
         logger.warning("No active analysis prompt found")
         return {}
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     # Build the conversation messages from persistent history for extraction (prompt_id=2)
     history = get_recent_conversation_messages(limit=CONVERSATION_HISTORY_LIMIT, prompt_id=2)
@@ -119,13 +118,7 @@ async def _generate_analysis_from_transcript(transcript: str, conv_id: str = Non
     messages.append({"role": "user", "content": current_prompt})
     messages = _normalise_messages(messages)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=prompt_text,
-        messages=messages,
-    )
-    raw = (message.content[0].text or "").strip()
+    raw = complete_text(prompt_text, messages, 2048, json_mode=True)
     parsed_payload = {}
     parse_success = False
     parse_error = None

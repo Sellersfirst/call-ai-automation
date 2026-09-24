@@ -2,13 +2,9 @@ import json
 import logging
 import re
 
-import anthropic
-
-from config.config import ANTHROPIC_API_KEY
+from services.llm_service import complete_text
 
 logger = logging.getLogger("variable_extraction")
-
-CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
 def _extract_json_text(raw: str) -> str:
@@ -63,14 +59,7 @@ def extract_variables(
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
-            system=prompt_text,
-            messages=[{"role": "user", "content": user_content}],
-        )
-        raw = (message.content[0].text or "").strip()
+        raw = complete_text(prompt_text, [{"role": "user", "content": user_content}], 1024, json_mode=True)
         parsed = json.loads(_extract_json_text(raw))
         if not isinstance(parsed, dict):
             raise ValueError("Model did not return a JSON object")

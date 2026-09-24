@@ -8,7 +8,6 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
-import anthropic
 import gspread
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -27,7 +26,8 @@ from config.database import (
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
 from utils.email import send_email
-from config.config import ANTHROPIC_API_KEY, ANTHROPIC_API_KEY_RUBRIC
+from config.config import ANTHROPIC_API_KEY_RUBRIC
+from services.llm_service import complete_text
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +398,6 @@ async def _score_with_claude(transcript: str) -> dict:
       5. Persist the new user turn and Claude's reply to conversation_messages.
       6. Parse and return the JSON analysis.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY_RUBRIC)
     system_prompt = _load_active_system_prompt()
 
     current_prompt = (
@@ -427,14 +426,9 @@ async def _score_with_claude(transcript: str) -> dict:
     # ------------------------------------------------------------------
     # Call Claude
     # ------------------------------------------------------------------
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=system_prompt,
-        messages=messages,
+    raw = complete_text(
+        system_prompt, messages, 2048, anthropic_api_key=ANTHROPIC_API_KEY_RUBRIC, json_mode=True
     )
-
-    raw = (message.content[0].text or "").strip()
 
     # ------------------------------------------------------------------
     # Persist both turns to conversation history
@@ -465,7 +459,6 @@ async def _score_with_claude_agent(transcript: str) -> dict:
     database so the frontend can display it under that prompt, exactly like the
     'rubrics' flow — just filtered by the agent_scoring prompt_id instead.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     system_prompt, prompt_id = get_active_prompt_with_id("agent_scoring")
     if not system_prompt or system_prompt == "insert prompt here":
@@ -489,14 +482,7 @@ async def _score_with_claude_agent(transcript: str) -> dict:
     messages.append({"role": "user", "content": current_prompt})
     messages = _normalise_messages(messages)
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=system_prompt,
-        messages=messages,
-    )
-
-    raw = (message.content[0].text or "").strip()
+    raw = complete_text(system_prompt, messages, 2048, json_mode=True)
 
     try:
         add_conversation_message("user", current_prompt, prompt_id=prompt_id)

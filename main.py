@@ -1,5 +1,5 @@
 import logging, time
-from fastapi import FastAPI, Header, Depends, Request
+from fastapi import FastAPI, Header, Depends, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +22,7 @@ from api.agent_memory_webhook import router as AgentMemoryRouter
 from api.conversation import router as ConversationRouter
 from api.extraction_webhook import router as ExtractionRouter
 from api.auth import router as AuthRouter
-from core.celery_app import run_scheduler
+from api.ai_settings import router as AISettingsRouter
 
 
 logging.basicConfig(
@@ -78,9 +78,14 @@ app.include_router(AgentMemoryRouter,   prefix="/api/agent-memory", tags=["Agent
 app.include_router(ConversationRouter,  prefix="/api",              tags=["Conversation"])
 app.include_router(ExtractionRouter,    prefix="/api/extraction",   tags=["Variable Extraction"])
 app.include_router(AuthRouter,          prefix="/api",              tags=["Auth"])
+app.include_router(AISettingsRouter)
 
 @app.get("/test-scheduler")
 def test_scheduler():
+    try:
+        from core.celery_app import run_scheduler
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     run_scheduler.delay()
     return {"message": "Scheduler triggered manually"}
 

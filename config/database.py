@@ -128,6 +128,12 @@ def init_db():
             ON CONFLICT (id) DO NOTHING
         """)
 
+        conn.execute("""
+            ALTER TABLE config ADD COLUMN IF NOT EXISTS
+            ai_provider TEXT NOT NULL DEFAULT 'claude'
+            CHECK (ai_provider IN ('claude', 'openai'))
+        """)
+
         #  SHEETS 
         # type:  'google_sheet_job' (default) | 'salesforce_job'
         # query: NULL for sheet jobs, SOQL string for salesforce jobs
