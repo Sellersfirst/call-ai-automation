@@ -55,7 +55,7 @@ def complete_text(
             raise RuntimeError("OPENAI_API_KEY is not configured")
         payload = {
             "model": OPENAI_MODEL,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
             "messages": [{"role": "system", "content": system_prompt}, *messages],
         }
         if json_mode:
