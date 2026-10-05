@@ -25,7 +25,7 @@ from config.database import (
 )
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
-from utils.email import send_email
+from utils.whatsapp import send_whatsapp
 from config.config import ANTHROPIC_API_KEY_RUBRIC
 from services.llm_service import complete_text
 
@@ -33,16 +33,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/smrt", tags=["smrt"])
 
-_EMAIL_SUBJECT = "call rubrics"
-
-# Salesforce owner names are mapped to their rubric email recipients. Keep the
-# keys normalized so minor differences in case or whitespace do not block email.
-_OWNER_EMAILS = {
-    "michael villegas": "michaelv@sellersfirstre.com",
-    "shelby nassar": "shelbyn@sellersfirstre.com",
-    "hunter petersen": "hunterp@sellersfirstre.com",
-    "paul kim": "paulk@sellersfirstre.com",
+_OWNER_WHATSAPP = {
+    "hunter petersen": "+19496482356",
+    "shelby nassar": "+12195163228",
+    "paul kim": "+17149322914",
+    "michael villegas": "+17143832112",
 }
+_RUBRIC_COPY_WHATSAPP = ""  # TODO: number that always gets a copy
 
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 _SMRT_WORKSHEET_NAME  = "Scoring Rubrics"
@@ -806,31 +803,68 @@ async def _update_salesforce_lead_score(sf_id: str, sf_record_url: str, analysis
     )
 
 
+def _build_whatsapp_variables(analysis: dict, record: dict) -> dict[str, str]:
+    """Map the offer-call rubric onto the WhatsApp template's {{1}}..{{19}}."""
+    missed = analysis.get("missed_questions") or []
+    if isinstance(missed, list):
+        missed_str = "; ".join(str(q) for q in missed if q) or "None"
+    else:
+        missed_str = str(missed).strip() or "None"
+
+    values = [
+        record.get("user_name"),
+        record.get("lead_owner"),
+        record.get("opportunity_owner"),
+        "Offer Call",
+        record.get("duration"),
+        analysis.get("overall_score"),
+        analysis.get("lead_score"),
+        missed_str,
+        analysis.get("next_best_action"),
+        analysis.get("rep_feedback"),
+        analysis.get("coaching_summary_for_slack"),
+        analysis.get("rapport_connection_summary"),
+        analysis.get("objection_boxing_result"),
+        analysis.get("expectation_setting_score"),
+        analysis.get("rapport_connection_score"),
+        analysis.get("offer_delivery_score"),
+        analysis.get("objection_handling_declined_score"),
+        analysis.get("urgency_anchor_score"),
+        analysis.get("clear_next_step_score"),
+    ]
+    return {str(i): "N/A" if v is None or v == "" else str(v) for i, v in enumerate(values, start=1)}
+
+
 async def _send_email(analysis: dict, record: dict) -> None:
     """
-    Send the rubric to the Salesforce opportunity owner, or lead owner when no
-    opportunity owner is available. Uses the same content as Salesforce Chatter.
-    The rubric is also always copied to abdulraufsiddiqui1999@gmail.com.
+    Send the offer-call rubric over WhatsApp (one template message) to the
+    Salesforce opportunity owner, or lead owner when no opportunity owner is
+    available. The rubric is also always copied to ``_RUBRIC_COPY_WHATSAPP``.
     """
+    if "offer" not in str(analysis.get("call_type", "")).lower():
+        logger.info("Skipping rubric WhatsApp: the template only covers offer calls")
+        return
+
     owner_name = record.get("opportunity_owner") or record.get("lead_owner")
     normalized_owner = " ".join(str(owner_name or "").split()).casefold()
-    recipient = _OWNER_EMAILS.get(normalized_owner)
+    recipient = _OWNER_WHATSAPP.get(normalized_owner)
 
     if not recipient:
         logger.warning(
-            "Skipping rubric email: no email mapping for opportunity_owner=%r, lead_owner=%r",
+            "Skipping rubric WhatsApp: no number for opportunity_owner=%r, lead_owner=%r",
             record.get("opportunity_owner"),
             record.get("lead_owner"),
         )
         return
 
-    try:
-        body_text = _build_chatter_body(analysis, record)
-        send_email(body_text, recipient, subject=_EMAIL_SUBJECT)
-        send_email(body_text, "abdulraufsiddiqui1999@gmail.com", subject=_EMAIL_SUBJECT)
-
-    except Exception as exc:
-        logger.error("Failed to send rubric email to %s: %s", recipient, exc)
+    variables = _build_whatsapp_variables(analysis, record)
+    for number in (recipient, _RUBRIC_COPY_WHATSAPP):
+        if not number:
+            continue
+        try:
+            send_whatsapp(variables, number)
+        except Exception as exc:
+            logger.error("Failed to send rubric WhatsApp to %s: %s", number, exc)
 
 
 def _get_sheets_client() -> gspread.Client:
