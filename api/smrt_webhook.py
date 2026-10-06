@@ -25,6 +25,7 @@ from config.database import (
 )
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
+from utils.email import send_email
 from utils.whatsapp import send_whatsapp
 from config.config import ANTHROPIC_API_KEY_RUBRIC
 from services.llm_service import complete_text
@@ -32,6 +33,18 @@ from services.llm_service import complete_text
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/smrt", tags=["smrt"])
+
+_EMAIL_SUBJECT = "call rubrics"
+
+# Salesforce owner names are mapped to their rubric email recipients. Keep the
+# keys normalized so minor differences in case or whitespace do not block email.
+_OWNER_EMAILS = {
+    "michael villegas": "michaelv@sellersfirstre.com",
+    "shelby nassar": "shelbyn@sellersfirstre.com",
+    "hunter petersen": "hunterp@sellersfirstre.com",
+    "paul kim": "paulk@sellersfirstre.com",
+}
+_RUBRIC_COPY_EMAIL = "abdulraufsiddiqui1999@gmail.com"
 
 _OWNER_WHATSAPP = {
     "hunter petersen": "+19496482356",
@@ -837,16 +850,33 @@ def _build_whatsapp_variables(analysis: dict, record: dict) -> dict[str, str]:
 
 async def _send_email(analysis: dict, record: dict) -> None:
     """
-    Send the offer-call rubric over WhatsApp (one template message) to the
-    Salesforce opportunity owner, or lead owner when no opportunity owner is
-    available. The rubric is also always copied to ``_RUBRIC_COPY_WHATSAPP``.
+    Send the rubric to the Salesforce opportunity owner, or lead owner when no
+    opportunity owner is available, by email (same content as Salesforce
+    Chatter, also copied to ``_RUBRIC_COPY_EMAIL``) and, for offer calls, over
+    WhatsApp (one template message, also copied to ``_RUBRIC_COPY_WHATSAPP``).
     """
+    owner_name = record.get("opportunity_owner") or record.get("lead_owner")
+    normalized_owner = " ".join(str(owner_name or "").split()).casefold()
+
+    email_recipient = _OWNER_EMAILS.get(normalized_owner)
+    if not email_recipient:
+        logger.warning(
+            "Skipping rubric email: no email mapping for opportunity_owner=%r, lead_owner=%r",
+            record.get("opportunity_owner"),
+            record.get("lead_owner"),
+        )
+    else:
+        body_text = _build_chatter_body(analysis, record)
+        for address in (email_recipient, _RUBRIC_COPY_EMAIL):
+            try:
+                send_email(body_text, address, subject=_EMAIL_SUBJECT)
+            except Exception as exc:
+                logger.error("Failed to send rubric email to %s: %s", address, exc)
+
     if "offer" not in str(analysis.get("call_type", "")).lower():
         logger.info("Skipping rubric WhatsApp: the template only covers offer calls")
         return
 
-    owner_name = record.get("opportunity_owner") or record.get("lead_owner")
-    normalized_owner = " ".join(str(owner_name or "").split()).casefold()
     recipient = _OWNER_WHATSAPP.get(normalized_owner)
 
     if not recipient:
