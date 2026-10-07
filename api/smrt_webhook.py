@@ -873,28 +873,32 @@ async def _send_email(analysis: dict, record: dict) -> None:
             except Exception as exc:
                 logger.error("Failed to send rubric email to %s: %s", address, exc)
 
-    if "offer" not in str(analysis.get("call_type", "")).lower():
-        logger.info("Skipping rubric WhatsApp: the template only covers offer calls")
-        return
+    # WhatsApp is best-effort: the template may not be approved yet, and a
+    # failure here must never affect the email above or the rest of the pipeline.
+    try:
+        if "offer" not in str(analysis.get("call_type", "")).lower():
+            logger.info("Skipping rubric WhatsApp: the template only covers offer calls")
+            return
 
-    recipient = _OWNER_WHATSAPP.get(normalized_owner)
+        recipient = _OWNER_WHATSAPP.get(normalized_owner)
+        if not recipient:
+            logger.warning(
+                "Skipping rubric WhatsApp: no number for opportunity_owner=%r, lead_owner=%r",
+                record.get("opportunity_owner"),
+                record.get("lead_owner"),
+            )
+            return
 
-    if not recipient:
-        logger.warning(
-            "Skipping rubric WhatsApp: no number for opportunity_owner=%r, lead_owner=%r",
-            record.get("opportunity_owner"),
-            record.get("lead_owner"),
-        )
-        return
-
-    variables = _build_whatsapp_variables(analysis, record)
-    for number in (recipient, _RUBRIC_COPY_WHATSAPP):
-        if not number:
-            continue
-        try:
-            send_whatsapp(variables, number)
-        except Exception as exc:
-            logger.error("Failed to send rubric WhatsApp to %s: %s", number, exc)
+        variables = _build_whatsapp_variables(analysis, record)
+        for number in (recipient, _RUBRIC_COPY_WHATSAPP):
+            if not number:
+                continue
+            try:
+                send_whatsapp(variables, number)
+            except Exception as exc:
+                logger.error("Failed to send rubric WhatsApp to %s: %s", number, exc)
+    except Exception as exc:
+        logger.error("Rubric WhatsApp step failed: %s", exc)
 
 
 def _get_sheets_client() -> gspread.Client:
