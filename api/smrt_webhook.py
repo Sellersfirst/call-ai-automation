@@ -44,7 +44,6 @@ _OWNER_EMAILS = {
     "hunter petersen": "hunterp@sellersfirstre.com",
     "paul kim": "paulk@sellersfirstre.com",
 }
-_RUBRIC_COPY_EMAIL = "abdulraufsiddiqui1999@gmail.com"
 
 _OWNER_WHATSAPP = {
     "hunter petersen": "+19496482356",
@@ -852,7 +851,7 @@ async def _send_email(analysis: dict, record: dict) -> None:
     """
     Send the rubric to the Salesforce opportunity owner, or lead owner when no
     opportunity owner is available, by email (same content as Salesforce
-    Chatter, also copied to ``_RUBRIC_COPY_EMAIL``) and, for offer calls, over
+    Chatter) and, for offer calls, over
     WhatsApp (one template message, also copied to ``_RUBRIC_COPY_WHATSAPP``).
     """
     owner_name = record.get("opportunity_owner") or record.get("lead_owner")
@@ -867,11 +866,10 @@ async def _send_email(analysis: dict, record: dict) -> None:
         )
     else:
         body_text = _build_chatter_body(analysis, record)
-        for address in (email_recipient, _RUBRIC_COPY_EMAIL):
-            try:
-                send_email(body_text, address, subject=_EMAIL_SUBJECT)
-            except Exception as exc:
-                logger.error("Failed to send rubric email to %s: %s", address, exc)
+        try:
+            send_email(body_text, email_recipient, subject=_EMAIL_SUBJECT)
+        except Exception as exc:
+            logger.error("Failed to send rubric email to %s: %s", email_recipient, exc)
 
     # WhatsApp is best-effort: the template may not be approved yet, and a
     # failure here must never affect the email above or the rest of the pipeline.
