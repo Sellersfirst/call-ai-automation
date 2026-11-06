@@ -95,6 +95,34 @@ For a process_call fill the 12 process keys and leave the offer keys as "N/A". F
 """
 
 
+_PROCESS_KEYS = [
+    "trust_score", "pacing_delivery_score", "tonality_score", "active_listening_score",
+    "clarifying_probing_score", "problem_impact_score", "urgency_score", "future_state_score",
+    "objection_prevention_score", "needs_anchor_score", "commitment_before_close_score",
+    "objection_handling_score",
+]
+_OFFER_KEYS = [
+    "expectation_setting_score", "rapport_connection_score", "offer_delivery_score",
+    "objection_handling_declined_score", "urgency_anchor_score", "clear_next_step_score",
+]
+
+
+def _compute_overall(a: dict, call_type: str | None) -> None:
+    """Equal-weight mean of numeric section scores (N/A / Not observable excluded), 1 decimal."""
+    ct = (call_type or a.get("call_type") or "").lower()
+    keys = _OFFER_KEYS if "offer" in ct else _PROCESS_KEYS
+    nums = []
+    for k in keys:
+        try:
+            n = float(a.get(k))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= 10:
+            nums.append(n)
+    if nums:
+        a["overall_score"] = round(sum(nums) / len(nums) + 1e-9, 1)
+
+
 def _extract_json(raw: str) -> dict:
     text = raw.strip()
     if text.startswith("```"):
@@ -116,7 +144,7 @@ def score_with_nepq(transcript: str, record: dict, call_type: str | None) -> dic
     context = [
         f"call_type (supplied): {call_type}" if call_type else "call_type: not supplied",
         f"Call duration (seconds): {record.get('duration') or 'unknown'}",
-        "Input: transcript only (no audio).",
+        "Input: transcript only (no audio). Tonality is 'Not observable'; Pacing and Delivery must still be scored on conversation structure and question delivery.",
         # Sheet data for the equity rules. Not wired to a source yet, so left blank.
         "Sheet data — Zestimate: ",
         "Sheet data — Total Liens: ",
@@ -133,7 +161,9 @@ def score_with_nepq(transcript: str, record: dict, call_type: str | None) -> dic
         json_mode=True,
     )
     try:
-        return _extract_json(raw)
+        result = _extract_json(raw)
+        _compute_overall(result, call_type)
+        return result
     except (ValueError, json.JSONDecodeError) as exc:
         logger.error("NEPQ returned invalid JSON: %s", raw[:1000])
         raise ValueError(f"NEPQ JSON parse error: {exc}") from exc
