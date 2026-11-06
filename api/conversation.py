@@ -45,7 +45,7 @@ class MessageResponse(BaseModel):
 
 def _load_active_system_prompt() -> str:
     """Load the active system prompt from the DB (same as smrt_webhook uses)."""
-    return get_active_prompt_text("rubrics")
+    return get_active_prompt_text("rubric_old")
 
 
 def _normalise_messages(messages: list[dict]) -> list[dict]:

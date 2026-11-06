@@ -367,7 +367,7 @@ def _extract_json_text(raw: str) -> str:
 
 
 def _load_active_system_prompt() -> str:
-    prompt_text = get_active_prompt_text("rubrics")
+    prompt_text = get_active_prompt_text("rubric_old")
     if prompt_text:
         return prompt_text
 

@@ -74,7 +74,7 @@ def _extract_json_text(raw: str) -> str:
 
 
 def _load_active_analysis_prompt() -> str:
-    return get_active_prompt_text("extraction")
+    return get_active_prompt_text("fus")
 
 
 def _normalise_messages(messages: list[dict]) -> list[dict]:
