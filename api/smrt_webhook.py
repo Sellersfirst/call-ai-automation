@@ -30,7 +30,7 @@ from utils.email import send_email
 from utils.whatsapp import send_whatsapp
 from config.config import ANTHROPIC_API_KEY_RUBRIC
 from services.llm_service import complete_text
-from api.nepq_rubric import score_with_nepq, append_nepq_to_sheet
+from api.nepq_rubric import build_user_turn, parse_response, append_nepq_to_sheet
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ async def _run_pipeline(record: dict):
             logger.warning("No transcript for call_id=%s — aborting", call_id)
             return
 
-        analysis = await _score_with_claude(transcript)
+        analysis = await _score_with_claude(transcript, record)
 
         # Normalize overall_score to 1-10 if Claude returned a 0-100 value
         raw_score = analysis.get("overall_score")
@@ -280,13 +280,6 @@ async def _run_pipeline(record: dict):
         await _send_email(analysis, record)
 
         _append_to_google_sheet(record, analysis, transcript, agent_analysis)
-
-        # NEPQ rubric runs alongside the main rubric; sheet output only, never fatal.
-        try:
-            nepq = await asyncio.to_thread(score_with_nepq, transcript, record, raw_call_type)
-            await asyncio.to_thread(append_nepq_to_sheet, _get_sheets_client(), record, nepq, transcript)
-        except Exception as exc:
-            logger.error("NEPQ rubric failed for call_id=%s: %s", call_id, exc)
 
         logger.info("Pipeline complete for call_id=%s", call_id)
 
@@ -404,69 +397,38 @@ def _normalise_messages(messages: list[dict]) -> list[dict]:
     return normalised
 
 
-async def _score_with_claude(transcript: str) -> dict:
+async def _score_with_claude(transcript: str, record: dict | None = None) -> dict:
     """
-    Score a call transcript using Claude.
+    Score a call transcript with the active 'rubric_nepq' prompt.
 
-    Flow:
-      1. Load active system prompt from DB.
-      2. Fetch recent conversation history (last CONVERSATION_HISTORY_LIMIT messages).
-      3. Build the messages array: history + new user turn (transcript scoring request).
-      4. Call Claude.
-      5. Persist the new user turn and Claude's reply to conversation_messages.
-      6. Parse and return the JSON analysis.
+    Flow: load prompt -> recent chat history for that prompt_id -> history + new
+    transcript turn -> LLM -> persist both turns -> parse JSON.
     """
-    system_prompt = _load_active_system_prompt()
+    system_prompt, prompt_id = get_active_prompt_with_id("rubric_nepq")
+    if not system_prompt:
+        raise ValueError("No active 'rubric_nepq' prompt found in DB")
 
-    current_prompt = (
-        "Please score this call transcript and return ONLY valid JSON using the schema defined in the system prompt. "
-        "Do not include any commentary, markdown fences, or extra text. "
-        "If you cannot supply valid JSON, return an empty JSON object {}.\n\n"
-        f"Transcript:\n\n{transcript}"
-    )
+    current_prompt = build_user_turn(transcript, record or {})
 
-    # ------------------------------------------------------------------
-    # Build messages array from persistent conversation history
-    # ------------------------------------------------------------------
-    history = get_recent_conversation_messages(prompt_id=1, include_null=True)  # uses CONVERSATION_HISTORY_LIMIT (50); rubrics or NULL
-
+    history = get_recent_conversation_messages(prompt_id=prompt_id)  # CONVERSATION_HISTORY_LIMIT (50)
     messages: list[dict] = []
     for row in history:
         role = "user" if row["message_from"] in ("user", "system") else "assistant"
         messages.append({"role": role, "content": row["message"]})
-
-    # Append the current transcript as the new user turn
     messages.append({"role": "user", "content": current_prompt})
-
-    # Ensure strict user/assistant alternation required by Anthropic API
     messages = _normalise_messages(messages)
 
-    # ------------------------------------------------------------------
-    # Call Claude
-    # ------------------------------------------------------------------
     raw = complete_text(
-        system_prompt, messages, 2048, anthropic_api_key=ANTHROPIC_API_KEY_RUBRIC, json_mode=True
+        system_prompt, messages, 8192, anthropic_api_key=ANTHROPIC_API_KEY_RUBRIC, json_mode=True
     )
 
-    # ------------------------------------------------------------------
-    # Persist both turns to conversation history
-    # ------------------------------------------------------------------
     try:
-            add_conversation_message("user", current_prompt, prompt_id=1)
-            add_conversation_message("assistant", raw, prompt_id=1)
+        add_conversation_message("user", current_prompt, prompt_id=prompt_id)
+        add_conversation_message("assistant", raw, prompt_id=prompt_id)
     except Exception as exc:
-        # Non-fatal — log but don't abort the scoring pipeline
         logger.error("Failed to persist conversation messages: %s", exc)
 
-    # ------------------------------------------------------------------
-    # Parse JSON response
-    # ------------------------------------------------------------------
-    try:
-        json_text = _extract_json_text(raw)
-        return json.loads(json_text)
-    except (ValueError, json.JSONDecodeError) as exc:
-        logger.error("Claude returned invalid JSON for transcript scoring: %s", raw[:1000])
-        raise ValueError(f"Claude JSON parse error: {exc}") from exc
+    return parse_response(raw)
 
 
 async def _score_with_claude_agent(transcript: str) -> dict:
@@ -687,7 +649,7 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
     sections.append(f"── CALL SUMMARY ──\n{call_summary or 'N/A'}")
 
     # ── MISSED QUESTIONS ─────────────────────────────────────────────────────
-    missed = analysis.get("missed_questions") or []
+    missed = analysis.get("missed_items") or []
     if isinstance(missed, list):
         missed_str = "; ".join(str(q) for q in missed if q) or "None"
     else:
@@ -714,15 +676,18 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
     if is_process:
         sections.append("\n".join([
             "── SCORES ──",
-            f"Opening              : {_val(analysis.get('opening_score'))}",
-            f"Going Deep           : {_val(analysis.get('going_deep_score'))}",
-            f"Motivation           : {_val(analysis.get('motivation_score'))}",
-            f"Urgency              : {_val(analysis.get('urgency_score'))}",
-            f"Condition            : {_val(analysis.get('condition_score'))}",
-            f"Price                : {_val(analysis.get('price_score'))}",
-            f"Objection            : {_val(analysis.get('objection_score'))}",
-            f"Next Step            : {_val(analysis.get('next_step_score'))}",
-            f"Rapport & Connection : {_val(analysis.get('rapport_connection_score'))}",
+            f"Trust                   : {_val(analysis.get('trust_score'))}",
+            f"Pacing & Delivery       : {_val(analysis.get('pacing_delivery_score'))}",
+            f"Tonality                : {_val(analysis.get('tonality_score'))}",
+            f"Active Listening        : {_val(analysis.get('active_listening_score'))}",
+            f"Clarifying & Probing    : {_val(analysis.get('clarifying_probing_score'))}",
+            f"Problem Impact          : {_val(analysis.get('problem_impact_score'))}",
+            f"Urgency                 : {_val(analysis.get('urgency_score'))}",
+            f"Future State            : {_val(analysis.get('future_state_score'))}",
+            f"Objection Prevention    : {_val(analysis.get('objection_prevention_score'))}",
+            f"Needs & Anchor          : {_val(analysis.get('needs_anchor_score'))}",
+            f"Commitment Before Close : {_val(analysis.get('commitment_before_close_score'))}",
+            f"Objection Handling      : {_val(analysis.get('objection_handling_score'))}",
         ]))
     elif is_offer:
         sections.append("\n".join([
@@ -826,7 +791,7 @@ async def _update_salesforce_lead_score(sf_id: str, sf_record_url: str, analysis
 
 def _build_whatsapp_variables(analysis: dict, record: dict) -> dict[str, str]:
     """Map the offer-call rubric onto the WhatsApp template's {{1}}..{{19}}."""
-    missed = analysis.get("missed_questions") or []
+    missed = analysis.get("missed_items") or []
     if isinstance(missed, list):
         missed_str = "; ".join(str(q) for q in missed if q) or "None"
     else:
@@ -985,97 +950,8 @@ def _ensure_header_row(worksheet: gspread.Worksheet) -> None:
 
 
 def _append_to_google_sheet(record: dict, analysis: dict, transcript: str, agent_analysis: dict | None = None) -> None:
+    """Write the scored call to the 'Rubric NEPQ' tab (columns defined in api/nepq_rubric.py)."""
     try:
-        gc = _get_sheets_client()
-        sh = gc.open_by_key(_SMRT_SHEET_ID)
-
-        try:
-            ws = sh.worksheet(_SMRT_WORKSHEET_NAME)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=_SMRT_WORKSHEET_NAME, rows=1000, cols=50)
-            logger.info("Created new worksheet '%s'", _SMRT_WORKSHEET_NAME)
-
+        append_nepq_to_sheet(_get_sheets_client(), record, analysis, transcript)
     except Exception as exc:
-        logger.error("Could not open Google Sheet: %s", exc)
-        return
-
-    _ensure_header_row(ws)
-
-    a = analysis
-    missed = "; ".join(a.get("missed_questions", []))
-    now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S PST")
-
-    raw_call_type = str(a.get("call_type", "") or "").strip().lower()
-    if "process_call" in raw_call_type:
-        call_type_category = "process"
-    elif "offer_call" in raw_call_type:
-        call_type_category = "offer"
-    elif "incomplete_call" in raw_call_type:
-        call_type_category = "incomplete"
-    else:
-        call_type_category = raw_call_type or "unknown"
-
-    call_link = record.get("audio_url") or record.get("call_link", "")
-    process_fields = call_type_category == "process"
-    offer_fields = call_type_category == "offer"
-
-    row = [
-        record.get("call_id", ""),           # Call ID
-        # HYPERLINK formula makes the cell a clickable link to the SF Lead/Contact record
-        f'=HYPERLINK("{record.get("record_id", "")}", "Open in Salesforce")' if record.get("record_id") else "",  # Record ID
-        call_link,                             # Call Link (SMRT recording URL)
-        record.get("call_from", ""),          # Call From (renamed from caller)
-        record.get("call_to", ""),            # Call To (new)
-        record.get("lead_owner", ""),         # Lead Owner (new)
-        record.get("opportunity_owner", ""),  # Opportunity Owner (new)
-        a.get("call_type", ""),               # Call Type
-        now,                                  # Timestamp
-        record.get("duration", ""),           # Duration (new)
-        a.get("lead_score") if process_fields else "",                        # Lead Score (K)
-        a.get("overall_score") if (process_fields or offer_fields) else "",  # Overall Score (L)
-        a.get("opening_score") if process_fields else None,               # Opening Score
-        a.get("going_deep_score") if process_fields else None,            # Going Deep Score
-        a.get("motivation_score") if process_fields else None,            # Motivation Score
-        a.get("urgency_score") if process_fields else None,               # Urgency Score
-        a.get("condition_score") if process_fields else None,             # Condition Score
-        a.get("price_score") if process_fields else None,                 # Price Score
-        a.get("objection_score") if process_fields else None,             # Objection Score
-        a.get("next_step_score") if process_fields else None,             # Next Step Score
-        a.get("rapport_connection_score") if process_fields else None,    # Rapport & Connection Score (process call)
-        a.get("seller_motivation", "") if process_fields else "",       # Seller Motivation
-        a.get("seller_urgency", "") if process_fields else "",          # Seller Urgency
-        a.get("property_condition", "") if process_fields else "",      # Property Condition
-        a.get("expectation_setting_score") if offer_fields else None,   # Expectation Setting Score
-        a.get("rapport_connection_score") if offer_fields else None,    # Rapport & Connection Score (offer call)
-        a.get("offer_delivery_score") if offer_fields else None,        # Offer Delivery Score
-        a.get("objection_handling_declined_score") if offer_fields else None,  # Objection Handling Declined Score
-        a.get("urgency_anchor_score") if offer_fields else None,        # Urgency Anchor Score
-        a.get("clear_next_step_score") if offer_fields else None,       # Clear Next Step Score
-        a.get("objection_boxing_result", "") if offer_fields else "", # Objection Boxing Result
-        a.get("incomplete_call_reason", "") if call_type_category == "incomplete" else "",  # Incomplete Call Reason
-        a.get("call_summary", ""),            # Call Summary
-        a.get("rep_feedback", ""),            # Rep Feedback
-        a.get("rapport_connection_summary", ""),  # Rapport Connection Summary
-        a.get("price_notes", ""),             # Price Notes
-        a.get("next_best_action", ""),        # Next Best Action
-        a.get("coaching_summary_for_slack", ""),  # Coaching Summary For Slack
-        missed,                               # Missed Questions
-        transcript,                           # Call Transcript
-        a.get("lead_score_explanation", "") if process_fields else "",  # Lead Score Explanation
-        # Agent scoring columns (AP, AQ, AR)
-        (agent_analysis or {}).get("score", ""),
-        (agent_analysis or {}).get("script_summary", ""),
-        "; ".join((agent_analysis or {}).get("missed_items", []))
-        if isinstance((agent_analysis or {}).get("missed_items"), list)
-        else str((agent_analysis or {}).get("missed_items", "")),
-    ]
-    print(f"DEBUGGING: APPENDING ROW: {row}")
-
-    ws.append_row(row, value_input_option="USER_ENTERED")
-
-    logger.info(
-        "Sheet row appended | call_id=%s | sheet=%s | tab=%s",
-        record.get("call_id"),
-        _SMRT_SHEET_ID,
-        _SMRT_WORKSHEET_NAME,
-    )
+        logger.error("Could not write to Google Sheet: %s", exc)

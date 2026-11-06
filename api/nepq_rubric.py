@@ -10,9 +10,6 @@ from zoneinfo import ZoneInfo
 
 import gspread
 
-from config.config import ANTHROPIC_API_KEY_RUBRIC
-from config.database import get_active_prompt_text
-from services.llm_service import complete_text
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +85,11 @@ Return ONLY one valid JSON object, no markdown fences and no commentary. Apply e
   "rapport_connection_summary": "<trust/rapport evidence>",
   "missed_items": ["<specific missed opportunity>", "..."],
   "price_notes": "<prices, asking/offer/target figures discussed>",
-  "next_best_action": "<agreed or recommended next step>"
+  "next_best_action": "<agreed or recommended next step>",
+  "coaching_summary_for_slack": "<2-3 sentence coaching summary for the rep>"
 }
+
+Length limits (these fields are posted to Salesforce Chatter): rep_feedback max 1800 characters, call_summary max 800, every other text field max 500; lead_score_explanation max 1200.
 
 For a process_call fill the 12 process keys and leave the offer keys as "N/A". For an offer_call fill the offer keys and set the 12 process keys to "N/A" (except urgency_score etc. which are process-only). If the call is a substantial mixed call, fill both sets and set overall_score to the Process Call Score.
 """
@@ -135,38 +135,28 @@ def _extract_json(raw: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-def score_with_nepq(transcript: str, record: dict, call_type: str | None) -> dict:
-    """Score a transcript with the active 'rubric_nepq' prompt. Raises if no prompt exists."""
-    system_prompt = get_active_prompt_text(NEPQ_PROMPT_TYPE)
-    if not system_prompt:
-        raise ValueError("No active 'rubric_nepq' prompt found in DB")
-
+def build_user_turn(transcript: str, record: dict) -> str:
+    """User turn for scoring: context + mandatory JSON format + transcript (call_type is inferred)."""
     context = [
-        f"call_type (supplied): {call_type}" if call_type else "call_type: not supplied",
+        "call_type: not supplied (infer it from the call)",
         f"Call duration (seconds): {record.get('duration') or 'unknown'}",
         "Input: transcript only (no audio). Tonality is 'Not observable'; Pacing and Delivery must still be scored on conversation structure and question delivery.",
         # Sheet data for the equity rules. Not wired to a source yet, so left blank.
         "Sheet data — Zestimate: ",
         "Sheet data — Total Liens: ",
     ]
-    user_turn = (
-        "Evaluate this call.\n\n" + "\n".join(context) + "\n\n" + _OUTPUT_FORMAT +
-        f"\n\nTranscript:\n\n{transcript}"
-    )
-    raw = complete_text(
-        system_prompt,
-        [{"role": "user", "content": user_turn}],
-        8192,
-        anthropic_api_key=ANTHROPIC_API_KEY_RUBRIC,
-        json_mode=True,
-    )
+    return "Evaluate this call.\n\n" + "\n".join(context) + "\n\n" + _OUTPUT_FORMAT + f"\n\nTranscript:\n\n{transcript}"
+
+
+def parse_response(raw: str) -> dict:
+    """Parse the model's JSON and compute the overall score in code."""
     try:
         result = _extract_json(raw)
-        _compute_overall(result, call_type)
-        return result
     except (ValueError, json.JSONDecodeError) as exc:
         logger.error("NEPQ returned invalid JSON: %s", raw[:1000])
         raise ValueError(f"NEPQ JSON parse error: {exc}") from exc
+    _compute_overall(result, None)
+    return result
 
 
 def _ensure_header_row(ws: gspread.Worksheet) -> None:
