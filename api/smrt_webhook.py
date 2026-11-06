@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import io
 import json
 import logging
@@ -29,6 +30,7 @@ from utils.email import send_email
 from utils.whatsapp import send_whatsapp
 from config.config import ANTHROPIC_API_KEY_RUBRIC
 from services.llm_service import complete_text
+from api.nepq_rubric import score_with_nepq, append_nepq_to_sheet
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +280,13 @@ async def _run_pipeline(record: dict):
         await _send_email(analysis, record)
 
         _append_to_google_sheet(record, analysis, transcript, agent_analysis)
+
+        # NEPQ rubric runs alongside the main rubric; sheet output only, never fatal.
+        try:
+            nepq = await asyncio.to_thread(score_with_nepq, transcript, record, raw_call_type)
+            await asyncio.to_thread(append_nepq_to_sheet, _get_sheets_client(), record, nepq, transcript)
+        except Exception as exc:
+            logger.error("NEPQ rubric failed for call_id=%s: %s", call_id, exc)
 
         logger.info("Pipeline complete for call_id=%s", call_id)
 
