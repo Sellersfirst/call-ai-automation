@@ -1,10 +1,12 @@
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
-from core.auth import get_current_user
+from core.auth import get_current_user, require_admin
 from services.invoice_service import (
-    append_to_materials, configured_sheet_ids, extract_invoice, list_invoice_sheets,
+    add_invoice_sheet, append_to_materials, delete_invoice_sheet, extract_invoice,
+    get_invoice_sheet, list_invoice_sheets,
 )
 
 logger = logging.getLogger("invoices_api")
@@ -14,18 +16,38 @@ ALLOWED = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/gi
 MAX_BYTES = 20 * 1024 * 1024
 
 
+class SheetAdd(BaseModel):
+    url: str
+
+
 @router.get("/sheets")
 def sheets(_: dict = Depends(get_current_user)):
     return {"sheets": list_invoice_sheets()}
 
 
+@router.post("/sheets")
+def create_sheet(data: SheetAdd, _: dict = Depends(require_admin)):
+    try:
+        return add_invoice_sheet(data.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/sheets/{row_id}")
+def remove_sheet(row_id: int, _: dict = Depends(require_admin)):
+    if not delete_invoice_sheet(row_id):
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    return {"message": "Sheet removed"}
+
+
 @router.post("/add")
 async def add_invoice(
-    sheet_id: str = Form(...),
+    sheet_id: int = Form(...),   # invoice_sheets.id
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
 ):
-    if sheet_id not in configured_sheet_ids():
+    sheet = get_invoice_sheet(sheet_id)
+    if not sheet:
         raise HTTPException(status_code=400, detail="Unknown sheet")
     ctype = (file.content_type or "").lower()
     if ctype == "image/jpg":
@@ -43,7 +65,7 @@ async def add_invoice(
         raise HTTPException(status_code=502, detail=f"Invoice analysis failed: {exc}") from exc
 
     try:
-        result = append_to_materials(sheet_id, data, user["email"])
+        result = append_to_materials(sheet["spreadsheet_id"], data, user["email"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

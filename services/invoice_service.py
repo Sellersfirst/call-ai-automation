@@ -9,7 +9,9 @@ from datetime import datetime
 
 import httpx
 
+from config.database import get_connection
 from repositories.google_sheets_repository import get_client
+from utils.sheet_utils import extract_sheet_id
 
 logger = logging.getLogger("invoice_service")
 
@@ -17,8 +19,6 @@ INVOICE_MODEL = os.getenv("INVOICE_OPENAI_MODEL", "gpt-6.1-terra")
 MATERIALS_TAB = "Materials"
 HEADER_ROW = 5          # headers live in row 5, columns B..K
 FIRST_COL, LAST_COL = "B", "K"
-# Invoice sheets selectable in the UI (comma separated spreadsheet ids).
-DEFAULT_SHEET_IDS = "1Ke0CHxoSZIW0do-HoIxCb2gYXCEQRw5A3Df9DfS5mYE"
 
 SYSTEM_PROMPT = """You extract data from a vendor invoice or receipt (image or PDF).
 Return ONLY a JSON object with these keys:
@@ -33,29 +33,53 @@ Return ONLY a JSON object with these keys:
 Never invent values; use "" or null when unsure."""
 
 
-def configured_sheet_ids() -> list[str]:
-    raw = os.getenv("INVOICE_SHEET_IDS", DEFAULT_SHEET_IDS)
-    return [s.strip() for s in raw.split(",") if s.strip()]
-
-
-_title_cache: dict[str, str] = {}
-
-
 def list_invoice_sheets() -> list[dict]:
-    client = None
-    out = []
-    for sid in configured_sheet_ids():
-        title = _title_cache.get(sid)
-        if not title:
-            try:
-                client = client or get_client()
-                title = client.open_by_key(sid).title
-                _title_cache[sid] = title
-            except Exception as exc:  # no access yet: still list it by id
-                logger.warning("Could not read title for %s: %s", sid, exc)
-                title = sid
-        out.append({"id": sid, "name": title})
-    return out
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, spreadsheet_id, name, url FROM invoice_sheets ORDER BY LOWER(name)"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_invoice_sheet(row_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, spreadsheet_id, name, url FROM invoice_sheets WHERE id=%s", (row_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def add_invoice_sheet(url: str) -> dict:
+    """Validate a Google Sheet URL (access + 'Materials' tab) and store it."""
+    sid = extract_sheet_id(url or "")
+    if not sid:
+        raise ValueError("That doesn't look like a Google Sheets URL")
+    try:
+        sh = get_client().open_by_key(sid)
+    except Exception as exc:
+        raise ValueError(
+            "Can't open that sheet. Share it with the service account as Editor first."
+        ) from exc
+    if MATERIALS_TAB not in [w.title for w in sh.worksheets()]:
+        raise ValueError(f"'{sh.title}' has no '{MATERIALS_TAB}' tab")
+    clean_url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+    with get_connection() as conn:
+        if conn.execute("SELECT 1 FROM invoice_sheets WHERE spreadsheet_id=%s", (sid,)).fetchone():
+            raise ValueError(f"'{sh.title}' is already in the list")
+        row = conn.execute(
+            "INSERT INTO invoice_sheets (spreadsheet_id, name, url) VALUES (%s,%s,%s) "
+            "RETURNING id, spreadsheet_id, name, url",
+            (sid, sh.title, clean_url),
+        ).fetchone()
+        conn.commit()
+    return dict(row)
+
+
+def delete_invoice_sheet(row_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM invoice_sheets WHERE id=%s", (row_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def extract_invoice(file_bytes: bytes, content_type: str, filename: str) -> dict:

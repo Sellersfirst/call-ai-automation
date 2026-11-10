@@ -384,6 +384,16 @@ def init_db():
         )
         """)
 
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS invoice_sheets (
+            id SERIAL PRIMARY KEY,
+            spreadsheet_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         # Bootstrap the first admin from env vars, only if no users exist yet
         initial_admin_email = os.getenv("INITIAL_ADMIN_EMAIL")
         initial_admin_password = os.getenv("INITIAL_ADMIN_PASSWORD")
