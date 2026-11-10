@@ -42,6 +42,8 @@ class UserAccessUpdate(BaseModel):
     job_ids: list[int] | None = None
     prompt_ids: list[int] | None = None
     invoice_access: bool | None = None
+    email: str | None = None
+    password: str | None = None
 
 
 #  LOGIN / SESSION
@@ -127,12 +129,31 @@ def create_user(data: UserCreate):
     return {"id": user_id, "message": "User created"}
 
 
-@router.put("/users/{user_id}/access", dependencies=[Depends(require_admin)])
-def update_user_access(user_id: int, data: UserAccessUpdate):
+@router.put("/users/{user_id}/access")
+def update_user_access(user_id: int, data: UserAccessUpdate, current: dict = Depends(require_admin)):
     with get_connection() as conn:
         existing = conn.execute("SELECT 1 FROM users WHERE id=%s", (user_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
+
+        if data.role is not None and current["id"] == user_id and data.role != "admin":
+            raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
+
+        if data.email is not None:
+            email = data.email.strip()
+            if not email:
+                raise HTTPException(status_code=400, detail="Email cannot be empty")
+            clash = conn.execute(
+                "SELECT 1 FROM users WHERE email=%s AND id<>%s", (email, user_id)
+            ).fetchone()
+            if clash:
+                raise HTTPException(status_code=409, detail="A user with this email already exists")
+            conn.execute("UPDATE users SET email=%s WHERE id=%s", (email, user_id))
+
+        if data.password:
+            conn.execute(
+                "UPDATE users SET password_hash=%s WHERE id=%s", (hash_password(data.password), user_id)
+            )
 
         if data.role is not None:
             if data.role not in ("admin", "user"):
