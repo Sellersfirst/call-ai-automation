@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from core.auth import get_current_user, require_admin
+from core.auth import get_any_user, require_admin
 from services.invoice_service import (
     add_invoice_sheet, append_to_materials, delete_invoice_sheet, extract_invoice,
     get_invoice_sheet, list_invoice_sheets,
@@ -21,7 +21,7 @@ class SheetAdd(BaseModel):
 
 
 @router.get("/sheets")
-def sheets(_: dict = Depends(get_current_user)):
+def sheets(_: dict = Depends(get_any_user)):
     return {"sheets": list_invoice_sheets()}
 
 
@@ -57,7 +57,7 @@ class InvoiceConfirm(BaseModel):
 
 
 @router.post("/extract")
-async def extract(file: UploadFile = File(...), _: dict = Depends(get_current_user)):
+async def extract(file: UploadFile = File(...), _: dict = Depends(get_any_user)):
     """Step 1: analyse the upload and return the fields for the user to review. Writes nothing."""
     ctype = (file.content_type or "").lower()
     if ctype == "image/jpg":
@@ -87,7 +87,7 @@ def _amount(v):
 
 
 @router.post("/add")
-def add_invoice(data: InvoiceConfirm, user: dict = Depends(get_current_user)):
+def add_invoice(data: InvoiceConfirm, user: dict = Depends(get_any_user)):
     """Step 2: write the (user-reviewed) fields to the selected sheet's Materials tab."""
     sheet = get_invoice_sheet(data.sheet_id)
     if not sheet:

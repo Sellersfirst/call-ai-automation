@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from config.database import get_connection
 from core.auth import (
     create_access_token,
+    get_any_user,
     get_current_user,
     hash_password,
     require_admin,
@@ -14,6 +15,8 @@ from core.auth import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+VALID_ROLES = ("admin", "user", "invoice")
 
 
 class LoginRequest(BaseModel):
@@ -59,7 +62,7 @@ def login(data: LoginRequest):
 
 
 @router.get("/me")
-def me(user: dict = Depends(get_current_user)):
+def me(user: dict = Depends(get_any_user)):
     return user
 
 
@@ -94,8 +97,8 @@ def list_users():
 
 @router.post("/users", dependencies=[Depends(require_admin)])
 def create_user(data: UserCreate):
-    if data.role not in ("admin", "user"):
-        raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
+    if data.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="role must be 'admin', 'user' or 'invoice'")
 
     with get_connection() as conn:
         existing = conn.execute("SELECT 1 FROM users WHERE email=%s", (data.email,)).fetchone()
@@ -108,12 +111,12 @@ def create_user(data: UserCreate):
         )
         user_id = cursor.fetchone()[0]
 
-        for sheet_id in data.job_ids:
+        for sheet_id in (data.job_ids if data.role != "invoice" else []):
             conn.execute(
                 "INSERT INTO user_job_access (user_id, sheet_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (user_id, sheet_id),
             )
-        for prompt_id in data.prompt_ids:
+        for prompt_id in (data.prompt_ids if data.role != "invoice" else []):
             conn.execute(
                 "INSERT INTO user_prompt_access (user_id, prompt_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (user_id, prompt_id),
@@ -131,8 +134,8 @@ def update_user_access(user_id: int, data: UserAccessUpdate):
             raise HTTPException(status_code=404, detail="User not found")
 
         if data.role is not None:
-            if data.role not in ("admin", "user"):
-                raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
+            if data.role not in VALID_ROLES:
+                raise HTTPException(status_code=400, detail="role must be 'admin', 'user' or 'invoice'")
             conn.execute("UPDATE users SET role=%s WHERE id=%s", (data.role, user_id))
 
         if data.job_ids is not None:

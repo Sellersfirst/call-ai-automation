@@ -368,6 +368,13 @@ def init_db():
         )
         """)
 
+        # Allow the invoice-only role (widens the original admin/user check)
+        conn.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
+        conn.execute(
+            "ALTER TABLE users ADD CONSTRAINT users_role_check "
+            "CHECK (role IN ('admin', 'user', 'invoice'))"
+        )
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS user_job_access (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -9,6 +9,7 @@ from config.database import get_connection
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_DAYS = 7
+INVOICE_ROLE = "invoice"   # may only use the Invoice Entry endpoints
 
 
 def hash_password(password: str) -> str:
@@ -37,7 +38,8 @@ def _decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def get_current_user(authorization: str | None = Header(None)) -> dict:
+def get_any_user(authorization: str | None = Header(None)) -> dict:
+    """Authenticate any valid user, including invoice-only accounts."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
 
@@ -54,6 +56,13 @@ def get_current_user(authorization: str | None = Header(None)) -> dict:
         raise HTTPException(status_code=401, detail="User no longer exists")
 
     return dict(row)
+
+
+def get_current_user(user: dict = Depends(get_any_user)) -> dict:
+    """Default guard for the whole app: invoice-only accounts are not allowed through."""
+    if user["role"] == INVOICE_ROLE:
+        raise HTTPException(status_code=403, detail="This account can only use Invoice Entry")
+    return user
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
