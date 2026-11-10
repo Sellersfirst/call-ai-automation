@@ -16,8 +16,6 @@ from core.auth import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-VALID_ROLES = ("admin", "user", "invoice")
-
 
 class LoginRequest(BaseModel):
     email: str
@@ -36,12 +34,14 @@ class UserCreate(BaseModel):
     role: str = "user"
     job_ids: list[int] = []
     prompt_ids: list[int] = []
+    invoice_access: bool = False
 
 
 class UserAccessUpdate(BaseModel):
     role: str | None = None
     job_ids: list[int] | None = None
     prompt_ids: list[int] | None = None
+    invoice_access: bool | None = None
 
 
 #  LOGIN / SESSION
@@ -71,7 +71,7 @@ def me(user: dict = Depends(get_any_user)):
 @router.get("/users", dependencies=[Depends(require_admin)])
 def list_users():
     with get_connection() as conn:
-        users = conn.execute("SELECT id, email, role, created_at FROM users ORDER BY id").fetchall()
+        users = conn.execute("SELECT id, email, role, invoice_access, created_at FROM users ORDER BY id").fetchall()
         job_rows = conn.execute("SELECT user_id, sheet_id FROM user_job_access").fetchall()
         prompt_rows = conn.execute("SELECT user_id, prompt_id FROM user_prompt_access").fetchall()
 
@@ -87,6 +87,7 @@ def list_users():
             "id": u["id"],
             "email": u["email"],
             "role": u["role"],
+            "invoice_access": bool(u["invoice_access"]),
             "created_at": str(u["created_at"]),
             "job_ids": jobs_by_user.get(u["id"], []),
             "prompt_ids": prompts_by_user.get(u["id"], []),
@@ -97,8 +98,8 @@ def list_users():
 
 @router.post("/users", dependencies=[Depends(require_admin)])
 def create_user(data: UserCreate):
-    if data.role not in VALID_ROLES:
-        raise HTTPException(status_code=400, detail="role must be 'admin', 'user' or 'invoice'")
+    if data.role not in ("admin", "user"):
+        raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
 
     with get_connection() as conn:
         existing = conn.execute("SELECT 1 FROM users WHERE email=%s", (data.email,)).fetchone()
@@ -106,17 +107,17 @@ def create_user(data: UserCreate):
             raise HTTPException(status_code=409, detail="A user with this email already exists")
 
         cursor = conn.execute(
-            "INSERT INTO users (email, password_hash, role) VALUES (%s, %s, %s) RETURNING id",
-            (data.email, hash_password(data.password), data.role),
+            "INSERT INTO users (email, password_hash, role, invoice_access) VALUES (%s, %s, %s, %s) RETURNING id",
+            (data.email, hash_password(data.password), data.role, data.invoice_access),
         )
         user_id = cursor.fetchone()[0]
 
-        for sheet_id in (data.job_ids if data.role != "invoice" else []):
+        for sheet_id in data.job_ids:
             conn.execute(
                 "INSERT INTO user_job_access (user_id, sheet_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (user_id, sheet_id),
             )
-        for prompt_id in (data.prompt_ids if data.role != "invoice" else []):
+        for prompt_id in data.prompt_ids:
             conn.execute(
                 "INSERT INTO user_prompt_access (user_id, prompt_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (user_id, prompt_id),
@@ -134,9 +135,12 @@ def update_user_access(user_id: int, data: UserAccessUpdate):
             raise HTTPException(status_code=404, detail="User not found")
 
         if data.role is not None:
-            if data.role not in VALID_ROLES:
-                raise HTTPException(status_code=400, detail="role must be 'admin', 'user' or 'invoice'")
+            if data.role not in ("admin", "user"):
+                raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
             conn.execute("UPDATE users SET role=%s WHERE id=%s", (data.role, user_id))
+
+        if data.invoice_access is not None:
+            conn.execute("UPDATE users SET invoice_access=%s WHERE id=%s", (data.invoice_access, user_id))
 
         if data.job_ids is not None:
             conn.execute("DELETE FROM user_job_access WHERE user_id=%s", (user_id,))

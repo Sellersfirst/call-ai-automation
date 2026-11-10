@@ -9,7 +9,6 @@ from config.database import get_connection
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_DAYS = 7
-INVOICE_ROLE = "invoice"   # may only use the Invoice Entry endpoints
 
 
 def hash_password(password: str) -> str:
@@ -39,7 +38,7 @@ def _decode_token(token: str) -> dict:
 
 
 def get_any_user(authorization: str | None = Header(None)) -> dict:
-    """Authenticate any valid user, including invoice-only accounts."""
+    """Authenticate any valid user. Adds invoice_access and invoice_only flags."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
 
@@ -48,20 +47,41 @@ def get_any_user(authorization: str | None = Header(None)) -> dict:
 
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, email, role FROM users WHERE id=%s",
+            """
+            SELECT u.id, u.email, u.role, u.invoice_access,
+                   (SELECT COUNT(*) FROM user_job_access j WHERE j.user_id = u.id) AS n_jobs,
+                   (SELECT COUNT(*) FROM user_prompt_access p WHERE p.user_id = u.id) AS n_prompts
+            FROM users u WHERE u.id=%s
+            """,
             (payload["user_id"],),
         ).fetchone()
 
     if not row:
         raise HTTPException(status_code=401, detail="User no longer exists")
 
-    return dict(row)
+    user = {"id": row["id"], "email": row["email"], "role": row["role"]}
+    user["invoice_access"] = user["role"] == "admin" or bool(row["invoice_access"])
+    # Invoice access with no job/prompt access = invoice-only account
+    user["invoice_only"] = (
+        user["role"] != "admin"
+        and bool(row["invoice_access"])
+        and row["n_jobs"] == 0
+        and row["n_prompts"] == 0
+    )
+    return user
 
 
 def get_current_user(user: dict = Depends(get_any_user)) -> dict:
-    """Default guard for the whole app: invoice-only accounts are not allowed through."""
-    if user["role"] == INVOICE_ROLE:
+    """Default guard for the app: invoice-only accounts are not allowed through."""
+    if user["invoice_only"]:
         raise HTTPException(status_code=403, detail="This account can only use Invoice Entry")
+    return user
+
+
+def get_invoice_user(user: dict = Depends(get_any_user)) -> dict:
+    """Guard for invoice endpoints: admins and users granted invoice access."""
+    if not user["invoice_access"]:
+        raise HTTPException(status_code=403, detail="You do not have Invoice Entry access")
     return user
 
 
