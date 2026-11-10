@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from core.auth import get_invoice_user, require_admin
 from services.invoice_service import (
+    normalize_payment_method,
     add_invoice_sheet, append_to_materials, delete_invoice_sheet, extract_invoice,
     get_invoice_sheet, list_invoice_sheets,
 )
@@ -12,8 +13,15 @@ from services.invoice_service import (
 logger = logging.getLogger("invoices_api")
 router = APIRouter(prefix="/api/invoices", tags=["Invoices"])
 
-ALLOWED = {"application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"}
-MAX_BYTES = 20 * 1024 * 1024
+ALLOWED = {"application/pdf", "image/png", "image/jpeg", "image/webp"}
+MAX_BYTES = 5 * 1024 * 1024
+# File signatures: the declared content-type must match the real bytes
+SIGNATURES = {
+    "application/pdf": (b"%PDF",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/webp": (b"RIFF",),
+}
 
 
 class SheetAdd(BaseModel):
@@ -64,14 +72,19 @@ async def extract(file: UploadFile = File(...), _: dict = Depends(get_invoice_us
         ctype = "image/jpeg"
     if ctype not in ALLOWED:
         raise HTTPException(status_code=400, detail="Upload a PDF or an image (PNG, JPG, WEBP)")
-    content = await file.read()
-    if not content or len(content) > MAX_BYTES:
-        raise HTTPException(status_code=400, detail="File is empty or larger than 20MB")
+    content = await file.read(MAX_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(content) > MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File is larger than 5MB")
+    if not content.startswith(SIGNATURES[ctype]) or (ctype == "image/webp" and content[8:12] != b"WEBP"):
+        raise HTTPException(status_code=400, detail="File content doesn't match its type")
     try:
         data = extract_invoice(content, ctype, file.filename or "invoice")
     except Exception as exc:
         logger.exception("Invoice extraction failed")
         raise HTTPException(status_code=502, detail=f"Invoice analysis failed: {exc}") from exc
+    data["payment_method"] = normalize_payment_method(data.get("payment_method"))
     return {"fields": InvoiceFields(**{k: (data.get(k) if data.get(k) is not None else d)
                                        for k, d in [("tag", ""), ("date", ""), ("vendor", ""),
                                                     ("invoice_number", ""), ("items", ""),

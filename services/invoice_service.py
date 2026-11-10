@@ -112,18 +112,20 @@ EXTRACTION RULES:
 - If the final amount cannot be determined, return null.
 
 7. PAYMENT_METHOD:
-- Extract the actual payment method when explicitly shown.
-- Examples:
-  "American Express 3068"
-  "Visa 1234"
-  "Cash"
-  "Check"
-- Include the card type and last four digits when available.
-- Do not return full card numbers.
-- Do NOT confuse payment terms such as NET 30,
-  NET 15, or NET 60 with actual payment methods.
-- If the invoice does not show an actual payment method,
-  return "".
+- Return EXACTLY one of these values, in capitals, and nothing else:
+  "POOL CORP", "AMEX", "DEBIT", "CHECK", "CASH"
+- AMEX: paid with an American Express card
+  (shown as AMEX, American Express, or an Amex card number).
+- DEBIT: paid with a debit card (shown as DEBIT or a debit card sale).
+- CHECK: paid by check.
+- CASH: paid in cash.
+- POOL CORP: the invoice is billed to the customer's account with
+  Pool Corp (including its supply branches such as Superior Pool
+  Products / SCP) and not paid by card, check, or cash at the time.
+- If the payment method is not shown or does not clearly match one
+  of these five values (for example Visa or Mastercard credit cards,
+  or payment terms like NET 30), return "".
+- Never return any other text, card digits, or payment terms.
 
 8. NOTES:
 - Extract important additional information not captured
@@ -251,7 +253,29 @@ def _to_number(v):
     try:
         return float(cleaned)
     except ValueError:
-        return str(v)
+        return ""
+
+
+def _safe_text(v) -> str:
+    """Stop spreadsheet formula injection: text starting with = + - @ would be run as a formula."""
+    text = "" if v is None else str(v).strip()
+    if text[:1] in ("=", "+", "-", "@"):
+        text = "'" + text
+    return text[:2000]
+
+
+PAYMENT_METHODS = ("POOL CORP", "AMEX", "DEBIT", "CHECK", "CASH")
+
+
+def normalize_payment_method(v) -> str:
+    """The sheet column is a dropdown: only write one of the allowed values."""
+    text = " ".join(str(v or "").upper().split())
+    return text if text in PAYMENT_METHODS else ""
+
+
+def _safe_date(v) -> str:
+    text = _safe_text(v)
+    return text if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", text) else ""
 
 
 def append_to_materials(sheet_id: str, data: dict, entered_by: str) -> dict:
@@ -273,14 +297,14 @@ def append_to_materials(sheet_id: str, data: dict, entered_by: str) -> dict:
 
     # B TAG, C DATE, D VENDOR, E INVOICE #, F ITEMS, G AMT, H PAYMENT, I NOTES, J SPLIT, K ENTERED BY
     row = [
-        data.get("tag") or "",
-        data.get("date") or datetime.now().strftime("%m/%d/%Y"),
-        data.get("vendor") or "",
-        data.get("invoice_number") or "",
-        data.get("items") or "",
+        _safe_text(data.get("tag")),
+        _safe_date(data.get("date")) or datetime.now().strftime("%m/%d/%Y"),
+        _safe_text(data.get("vendor")),
+        _safe_text(data.get("invoice_number")),
+        _safe_text(data.get("items")),
         _to_number(data.get("amount")),
-        data.get("payment_method") or "",
-        data.get("notes") or "",
+        normalize_payment_method(data.get("payment_method")),
+        _safe_text(data.get("notes")),
         "",
         entered_by,
     ]
