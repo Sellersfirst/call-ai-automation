@@ -23,6 +23,7 @@ from api.conversation import router as ConversationRouter
 from api.extraction_webhook import router as ExtractionRouter
 from api.auth import router as AuthRouter
 from api.ai_settings import router as AISettingsRouter
+from api.invoices import router as InvoicesRouter
 
 
 logging.basicConfig(
@@ -79,6 +80,7 @@ app.include_router(ConversationRouter,  prefix="/api",              tags=["Conve
 app.include_router(ExtractionRouter,    prefix="/api/extraction",   tags=["Variable Extraction"])
 app.include_router(AuthRouter,          prefix="/api",              tags=["Auth"])
 app.include_router(AISettingsRouter)
+app.include_router(InvoicesRouter)
 
 @app.get("/test-scheduler")
 def test_scheduler():
