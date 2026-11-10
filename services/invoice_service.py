@@ -15,7 +15,7 @@ from utils.sheet_utils import extract_sheet_id
 
 logger = logging.getLogger("invoice_service")
 
-INVOICE_MODEL = os.getenv("INVOICE_OPENAI_MODEL", "gpt-6.1-terra")
+INVOICE_MODEL = os.getenv("INVOICE_OPENAI_MODEL", "gpt-6-luna")
 MATERIALS_TAB = "Materials"
 HEADER_ROW = 5          # headers live in row 5, columns B..K
 FIRST_COL, LAST_COL = "B", "K"
