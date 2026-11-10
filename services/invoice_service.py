@@ -22,6 +22,7 @@ DEFAULT_SHEET_IDS = "1Ke0CHxoSZIW0do-HoIxCb2gYXCEQRw5A3Df9DfS5mYE"
 
 SYSTEM_PROMPT = """You extract data from a vendor invoice or receipt (image or PDF).
 Return ONLY a JSON object with these keys:
+- "tag": any HANDWRITTEN label/note written on the paper by a person (e.g. a store/job name and number such as "Burbank 14"), copied exactly; "" if none. Do not use the printed store name here.
 - "date": invoice/receipt date as MM/DD/YYYY, or "" if not found
 - "vendor": vendor / store name
 - "invoice_number": receipt or invoice number, or ""
@@ -124,7 +125,7 @@ def append_to_materials(sheet_id: str, data: dict, entered_by: str) -> dict:
 
     # B TAG, C DATE, D VENDOR, E INVOICE #, F ITEMS, G AMT, H PAYMENT, I NOTES, J SPLIT, K ENTERED BY
     row = [
-        "",
+        data.get("tag") or "",
         data.get("date") or datetime.now().strftime("%m/%d/%Y"),
         data.get("vendor") or "",
         data.get("invoice_number") or "",
