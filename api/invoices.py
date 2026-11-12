@@ -1,9 +1,11 @@
+import json
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from core.auth import get_invoice_user, require_admin
+from services import dropbox_service
 from services.invoice_service import (
     normalize_payment_method,
     add_invoice_sheet, append_to_materials, delete_invoice_sheet, extract_invoice,
@@ -64,9 +66,7 @@ class InvoiceConfirm(BaseModel):
     fields: InvoiceFields
 
 
-@router.post("/extract")
-async def extract(file: UploadFile = File(...), _: dict = Depends(get_invoice_user)):
-    """Step 1: analyse the upload and return the fields for the user to review. Writes nothing."""
+async def _read_upload(file: UploadFile) -> tuple[bytes, str]:
     ctype = (file.content_type or "").lower()
     if ctype == "image/jpg":
         ctype = "image/jpeg"
@@ -79,6 +79,13 @@ async def extract(file: UploadFile = File(...), _: dict = Depends(get_invoice_us
         raise HTTPException(status_code=400, detail="File is larger than 5MB")
     if not content.startswith(SIGNATURES[ctype]) or (ctype == "image/webp" and content[8:12] != b"WEBP"):
         raise HTTPException(status_code=400, detail="File content doesn't match its type")
+    return content, ctype
+
+
+@router.post("/extract")
+async def extract(file: UploadFile = File(...), _: dict = Depends(get_invoice_user)):
+    """Step 1: analyse the upload and return the fields for the user to review. Writes nothing."""
+    content, ctype = await _read_upload(file)
     try:
         data = extract_invoice(content, ctype, file.filename or "invoice")
     except Exception as exc:
@@ -100,13 +107,24 @@ def _amount(v):
 
 
 @router.post("/add")
-def add_invoice(data: InvoiceConfirm, user: dict = Depends(get_invoice_user)):
-    """Step 2: write the (user-reviewed) fields to the selected sheet's Materials tab."""
-    sheet = get_invoice_sheet(data.sheet_id)
+async def add_invoice(
+    sheet_id: int = Form(...),            # invoice_sheets.id
+    fields: str = Form(...),              # JSON of the reviewed InvoiceFields
+    file: UploadFile = File(...),
+    user: dict = Depends(get_invoice_user),
+):
+    """Step 2: write the reviewed fields to the sheet, then save the receipt file to Dropbox."""
+    try:
+        parsed = InvoiceFields(**json.loads(fields))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid invoice fields") from exc
+    sheet = get_invoice_sheet(sheet_id)
     if not sheet:
         raise HTTPException(status_code=400, detail="Unknown sheet")
+    content, ctype = await _read_upload(file)
+
     try:
-        result = append_to_materials(sheet["spreadsheet_id"], data.fields.model_dump(), user["email"])
+        result = append_to_materials(sheet["spreadsheet_id"], parsed.model_dump(), user["email"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -115,4 +133,18 @@ def add_invoice(data: InvoiceConfirm, user: dict = Depends(get_invoice_user)):
             status_code=502,
             detail=f"Could not write to the sheet (is it shared with the service account as Editor?): {exc}",
         ) from exc
-    return result
+
+    # The row is already in the sheet; a Dropbox problem is reported but does not undo it.
+    receipt = {"saved": False, "path": None, "error": None}
+    if not dropbox_service.is_configured():
+        receipt["error"] = "Dropbox is not configured on the server"
+    else:
+        try:
+            receipt["path"] = dropbox_service.save_receipt(
+                content, ctype, parsed.vendor, parsed.date, parsed.invoice_number
+            )
+            receipt["saved"] = True
+        except Exception as exc:
+            logger.exception("Dropbox save failed")
+            receipt["error"] = str(exc)
+    return {**result, "receipt": receipt}
