@@ -12,8 +12,8 @@ from config.database import get_connection
 logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+CLAUDE_MODEL = "claude-haiku-5-5"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 
 
 def get_ai_provider() -> str:
