@@ -53,7 +53,7 @@ Return ONLY one valid JSON object, no markdown fences and no commentary. Apply e
   "lead_equity": <integer 1-10 or "">,
   "lead_score_explanation": "<per-category evidence, calculation, excluded categories, known deal blockers, missing information>",
 
-  "overall_score": <Process Call Score or Offer Call Score as a number, one decimal, per the matching call_type>,
+  "overall_score": <mean of all scored process and offer section scores, one decimal>,
 
   "trust_score": <1-10 | "N/A" | "Not observable">,
   "pacing_delivery_score": <same>,
@@ -69,12 +69,12 @@ Return ONLY one valid JSON object, no markdown fences and no commentary. Apply e
   "objection_handling_score": <same>,
 
   "expectation_setting_score": <1-10 | "N/A" | "Not observable">,
-  "rapport_connection_score": <same, offer call only>,
+  "rapport_connection_score": <same>,
   "offer_delivery_score": <same>,
   "objection_handling_declined_score": <same>,
   "urgency_anchor_score": <same>,
   "clear_next_step_score": <same>,
-  "objection_boxing_result": "<four-step checklist result and any score cap; empty for process calls>",
+  "objection_boxing_result": "<four-step checklist result and any score cap; 'N/A' when no offer was presented>",
 
   "seller_motivation": "<reason for selling>",
   "seller_urgency": "<urgency and timeline>",
@@ -148,7 +148,7 @@ Use "N/A" when no offer was made or the offer was accepted.
 
 Also fill: asked_for_target_number (did the rep ask "what number would work for you?" or an equivalent), follow_up_set (date, time, method after the objection), and rep_should_have (one sentence on what the rep should have said or asked differently).
 
-For a process_call fill the 12 process keys and leave the offer keys as "N/A". For an offer_call fill the offer keys and set the 12 process keys to "N/A" (except urgency_score etc. which are process-only). If the call is a substantial mixed call, fill both sets and set overall_score to the Process Call Score.
+Set call_type as before (it is a label for the call). The label does NOT limit what you score: on EVERY call, whether call_type is process_call or offer_call, fill the 12 process keys AND the 6 offer keys (plus objection_boxing_result). Score a section "N/A" or "Not observable" only when that part of the call genuinely did not take place (for example, the offer scores when no price was ever presented). Discussing price does not by itself make a call an offer call, so judge each section on its own evidence.
 """
 
 
@@ -164,10 +164,7 @@ _OFFER_KEYS = [
 ]
 
 
-def _compute_overall(a: dict, call_type: str | None) -> None:
-    """Equal-weight mean of numeric section scores (N/A / Not observable excluded), 1 decimal."""
-    ct = (call_type or a.get("call_type") or "").lower()
-    keys = _OFFER_KEYS if "offer" in ct else _PROCESS_KEYS
+def _mean_of(a: dict, keys: list[str]) -> float | None:
     nums = []
     for k in keys:
         try:
@@ -176,8 +173,21 @@ def _compute_overall(a: dict, call_type: str | None) -> None:
             continue
         if 1 <= n <= 10:
             nums.append(n)
-    if nums:
-        a["overall_score"] = round(sum(nums) / len(nums) + 1e-9, 1)
+    return round(sum(nums) / len(nums) + 1e-9, 1) if nums else None
+
+
+def _compute_overall(a: dict) -> None:
+    """
+    Both sections are scored on every call, whatever the call_type label says.
+    process_score / offer_score are the equal-weight means of each section
+    (N/A / Not observable excluded); overall_score is the mean of every scored
+    criterion across both sections.
+    """
+    a["process_score"] = _mean_of(a, _PROCESS_KEYS)
+    a["offer_score"] = _mean_of(a, _OFFER_KEYS)
+    overall = _mean_of(a, _PROCESS_KEYS + _OFFER_KEYS)
+    if overall is not None:
+        a["overall_score"] = overall
 
 
 def _extract_json(raw: str) -> dict:
@@ -195,7 +205,7 @@ def _extract_json(raw: str) -> dict:
 def build_user_turn(transcript: str, record: dict) -> str:
     """User turn for scoring: context + mandatory JSON format + transcript (call_type is inferred)."""
     context = [
-        "call_type: not supplied (infer it from the call)",
+        "call_type: not supplied (infer it from the call). Score BOTH the process section and the offer section on every call, whatever call_type is.",
         f"Call duration (seconds): {record.get('duration') or 'unknown'}",
         "Input: transcript only (no audio). Tonality is 'Not observable'; Pacing and Delivery must still be scored on conversation structure and question delivery.",
         # Sheet data for the equity rules. Not wired to a source yet, so left blank.
@@ -212,7 +222,7 @@ def parse_response(raw: str) -> dict:
     except (ValueError, json.JSONDecodeError) as exc:
         logger.error("NEPQ returned invalid JSON: %s", raw[:1000])
         raise ValueError(f"NEPQ JSON parse error: {exc}") from exc
-    _compute_overall(result, None)
+    _compute_overall(result)
     return result
 
 

@@ -251,11 +251,11 @@ async def _run_pipeline(record: dict):
             )
             return
 
-        # Skip process calls under 3 minutes
+        # Skip calls under 3 minutes (process AND offer; only when the duration is known)
         duration = float(record.get("duration") or 0)
-        if "process" in raw_call_type and duration < 180:
+        if 0 < duration < 180:
             logger.info(
-                "Skipping pipeline — process call under 3 minutes | "
+                "Skipping pipeline — call under 3 minutes | "
                 "call_id=%s duration=%.1fs", call_id, duration
             )
             return
@@ -641,6 +641,8 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
         f"Call Type         : {call_type_label}",
         f"Duration          : {_val(record.get('duration'))}",
         f"Overall Score     : {_val(analysis.get('overall_score'))}",
+        f"Process Score     : {_val(analysis.get('process_score'))}",
+        f"Offer Score       : {_val(analysis.get('offer_score'))}",
         f"Lead Score        : {_val(analysis.get('lead_score'))}",
     ]))
 
@@ -668,14 +670,15 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
     # ── RAPPORT SUMMARY ──────────────────────────────────────────────────────
     sections.append(f"── RAPPORT SUMMARY ──\n{(analysis.get('rapport_connection_summary') or 'N/A').strip()}")
 
-    # ── OBJECTION BOXING (offer calls only) ──────────────────────────────────
-    if is_offer:
+    # ── OBJECTION BOXING (process and offer calls) ───────────────────────────
+    if is_process or is_offer:
         sections.append(f"── OBJECTION BOXING ──\n{(analysis.get('objection_boxing_result') or 'N/A').strip()}")
 
     # ── SCORES ───────────────────────────────────────────────────────────────
-    if is_process:
+    # Both score blocks for every process or offer call
+    if is_process or is_offer:
         sections.append("\n".join([
-            "── SCORES ──",
+            "── PROCESS SCORES ──",
             f"Trust                   : {_val(analysis.get('trust_score'))}",
             f"Pacing & Delivery       : {_val(analysis.get('pacing_delivery_score'))}",
             f"Tonality                : {_val(analysis.get('tonality_score'))}",
@@ -689,9 +692,9 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
             f"Commitment Before Close : {_val(analysis.get('commitment_before_close_score'))}",
             f"Objection Handling      : {_val(analysis.get('objection_handling_score'))}",
         ]))
-    elif is_offer:
+    if is_process or is_offer:
         sections.append("\n".join([
-            "── SCORES ──",
+            "── OFFER SCORES ──",
             f"Expectation Setting      : {_val(analysis.get('expectation_setting_score'))}",
             f"Rapport & Connection     : {_val(analysis.get('rapport_connection_score'))}",
             f"Offer Delivery           : {_val(analysis.get('offer_delivery_score'))}",
@@ -790,7 +793,7 @@ async def _update_salesforce_lead_score(sf_id: str, sf_record_url: str, analysis
 
 
 def _build_whatsapp_variables(analysis: dict, record: dict) -> dict[str, str]:
-    """Map the offer-call rubric onto the WhatsApp template's {{1}}..{{19}}."""
+    """Map the rubric (process and offer calls) onto the WhatsApp template's {{1}}..{{19}}."""
     missed = analysis.get("missed_items") or []
     if isinstance(missed, list):
         missed_str = "; ".join(str(q) for q in missed if q) or "None"
@@ -801,7 +804,7 @@ def _build_whatsapp_variables(analysis: dict, record: dict) -> dict[str, str]:
         record.get("user_name"),
         record.get("lead_owner"),
         record.get("opportunity_owner"),
-        "Offer Call",
+        "Process Call" if "process" in str(analysis.get("call_type", "")).lower() else "Offer Call",
         record.get("duration"),
         analysis.get("overall_score"),
         analysis.get("lead_score"),
@@ -825,7 +828,7 @@ async def _send_email(analysis: dict, record: dict) -> None:
     """
     Send the rubric to the Salesforce opportunity owner, or lead owner when no
     opportunity owner is available, by email (same content as Salesforce
-    Chatter) and, for offer calls, over
+    Chatter) and, for process and offer calls, over
     WhatsApp (one template message, also copied to ``_RUBRIC_COPY_WHATSAPP``).
     """
     owner_name = record.get("opportunity_owner") or record.get("lead_owner")
@@ -848,10 +851,6 @@ async def _send_email(analysis: dict, record: dict) -> None:
     # WhatsApp is best-effort: the template may not be approved yet, and a
     # failure here must never affect the email above or the rest of the pipeline.
     try:
-        if "offer" not in str(analysis.get("call_type", "")).lower():
-            logger.info("Skipping rubric WhatsApp: the template only covers offer calls")
-            return
-
         recipient = _OWNER_WHATSAPP.get(normalized_owner)
         if not recipient:
             logger.warning(
